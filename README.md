@@ -13,6 +13,8 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 ADMIN_PASSWORD_HASH=
+OPENAI_API_KEY=
+GEMINI_API_KEY=
 GROQ_API_KEY=
 ```
 `ADMIN_PASSWORD_HASH` nên là bcrypt hash. Mặc định repo đã thêm `.env.local` với hash của mật khẩu: Anhquan210706.
@@ -31,6 +33,12 @@ npm run dev
 ## Supabase (đề xuất bảng)
 - `assignments`, `questions`, `submissions`, `answers`, `admin_settings`
 - Bật RLS, anon chỉ được đọc assignments/questions và ghi submissions/answers.
+
+## Tạo bài bằng AI (OCR + sinh câu hỏi)
+- Tab "Tạo bằng AI" trong Admin → Tạo bài tập: dán/upload nhiều ảnh, PDF, hoặc kèm văn bản.
+- Pipeline: Google Gemini Vision OCR → làm sạch text → Groq (Llama 3.1) sinh câu hỏi trắc nghiệm JSON → Admin chỉnh sửa và lưu.
+- Yêu cầu biến môi trường: `GEMINI_API_KEY`, `GROQ_API_KEY`.
+- Câu hỏi chỉ được lưu khi bấm "Lưu bài tập"; dữ liệu AI không lưu tạm.
 
 ## Triển khai
 - Thiết lập biến môi trường trên Vercel theo `.env.example`.

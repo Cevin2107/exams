@@ -15,8 +15,10 @@ export function AssignmentList({ assignments }: AssignmentListProps) {
   const [subjectFilter, setSubjectFilter] = useState("Tất cả");
   const [statusFilter, setStatusFilter] = useState("Tất cả");
   const [now, setNow] = useState<number | null>(null);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
@@ -72,6 +74,14 @@ export function AssignmentList({ assignments }: AssignmentListProps) {
 
   return (
     <div className="space-y-4" suppressHydrationWarning>
+      {!mounted && (
+        <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-3" suppressHydrationWarning>
+          <div className="h-10 rounded-lg bg-slate-100" />
+          <div className="h-10 rounded-lg bg-slate-100" />
+          <div className="h-10 rounded-lg bg-slate-100" />
+        </div>
+      )}
+
       <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-3" suppressHydrationWarning>
         <input
           className="rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-inner focus:border-slate-400 focus:outline-none"
