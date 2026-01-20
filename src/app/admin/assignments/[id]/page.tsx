@@ -136,11 +136,24 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       setAssignment(data.assignment);
       setQuestions(data.questions || []);
       if (data.assignment) {
+        // Convert UTC to local time for datetime-local input
+        let dueAtLocal = "";
+        if (data.assignment.due_at) {
+          const date = new Date(data.assignment.due_at);
+          // Format: YYYY-MM-DDThh:mm (local timezone)
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          const hours = String(date.getHours()).padStart(2, '0');
+          const minutes = String(date.getMinutes()).padStart(2, '0');
+          dueAtLocal = `${year}-${month}-${day}T${hours}:${minutes}`;
+        }
+        
         setEditForm({
           title: data.assignment.title || "",
           subject: data.assignment.subject || "",
           grade: data.assignment.grade || "",
-          dueAt: data.assignment.due_at ? data.assignment.due_at.slice(0, 16) : "",
+          dueAt: dueAtLocal,
           durationMinutes: data.assignment.duration_minutes ?? "",
           totalScore: data.assignment.total_score?.toString() ?? "",
           isHidden: Boolean(data.assignment.is_hidden),
