@@ -1,3 +1,5 @@
+import sharp from "sharp";
+
 const GROQ_TEXT_MODEL = "llama-3.1-8b-instant";
 const OCR_SPACE_API_URL = "https://api.ocr.space/parse/image";
 
@@ -5,6 +7,11 @@ const MAX_TEXT_LENGTH = 15000;
 const TEXT_CHUNK_SIZE = 3500;
 const MAX_QUESTIONS = 16;
 const QUESTIONS_PER_CHUNK = 5;
+
+// OCR optimization settings
+const MAX_IMAGE_WIDTH = 1600; // Giảm kích thước để tăng tốc OCR
+const MAX_IMAGE_HEIGHT = 1600;
+const JPEG_QUALITY = 85;
 
 type HttpError = Error & { status?: number; details?: string };
 
@@ -19,22 +26,32 @@ interface OcrResult {
   source: string;
 }
 
-async function fileToBase64(file: File) {
+async function optimizeImage(file: File): Promise<Buffer> {
   const buffer = Buffer.from(await file.arrayBuffer());
-  return buffer.toString("base64");
+  
+  // Resize và compress ảnh để tăng tốc OCR
+  const optimized = await sharp(buffer)
+    .resize(MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT, {
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .jpeg({ quality: JPEG_QUALITY })
+    .toBuffer();
+  
+  return optimized;
 }
 
-async function callOcrSpaceApi(base64: string, mimeType: string) {
+async function callOcrSpaceApi(imageBuffer: Buffer): Promise<string> {
   const apiKey = process.env.OCR_SPACE_API_KEY || "K87899142388957";
-  
-  // OCR.space expects base64 with data URI prefix
-  const base64Image = `data:${mimeType};base64,${base64}`;
+  const base64Image = `data:image/jpeg;base64,${imageBuffer.toString("base64")}`;
   
   const formData = new URLSearchParams();
   formData.append("base64Image", base64Image);
   formData.append("isOverlayRequired", "false");
   formData.append("apikey", apiKey);
-  formData.append("OCREngine", "2"); // OCR Engine 2 is better for Asian languages
+  formData.append("OCREngine", "2");
+  formData.append("scale", "true"); // Auto-scale để tăng độ chính xác
+  formData.append("isTable", "false"); // Tắt table detection để nhanh hơn
 
   const res = await fetch(OCR_SPACE_API_URL, {
     method: "POST",
@@ -45,23 +62,18 @@ async function callOcrSpaceApi(base64: string, mimeType: string) {
   });
 
   if (!res.ok) {
-    const body = await res.text();
-    const message = `OCR.space API error: ${res.status}`;
-    const error: HttpError = Object.assign(new Error(message), {
-      status: res.status,
-      details: body,
-    });
-    throw error;
+    throw new Error(`OCR.space error ${res.status}: ${await res.text()}`);
   }
 
   const data = await res.json();
   
   if (data.IsErroredOnProcessing) {
-    throw new Error(`OCR.space error: ${data.ErrorMessage?.[0] || "Unknown error"}`);
+    const errorMsg = data.ErrorMessage?.[0] || "Unknown OCR error";
+    throw new Error(`OCR failed: ${errorMsg}`);
   }
   
   const text = data.ParsedResults?.[0]?.ParsedText?.trim();
-  if (!text) throw new Error("Empty OCR result from OCR.space");
+  if (!text) throw new Error("Empty OCR result");
   
   return text;
 }
@@ -83,8 +95,9 @@ async function ocrFile(file: File): Promise<OcrResult> {
     return { text, source: file.name };
   }
 
-  const base64 = await fileToBase64(file);
-  const text = await callOcrSpaceApi(base64, file.type || "image/png");
+  // Optimize ảnh trước khi OCR để tăng tốc
+  const optimizedBuffer = await optimizeImage(file);
+  const text = await callOcrSpaceApi(optimizedBuffer);
   return { text, source: file.name };
 }
 
@@ -229,12 +242,25 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
   const texts: string[] = [];
   const sources: Array<{ name: string; chars: number; kind: "image" | "pdf" | "text" }> = [];
 
-  for (const file of files) {
-    const { text, source } = await ocrFile(file);
-    if (text) {
-      texts.push(text);
-      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-      sources.push({ name: source, chars: text.length, kind: isPdf ? "pdf" : "image" });
+  // Process multiple files in parallel để tăng tốc
+  const ocrResults = await Promise.all(
+    files.map(async (file) => {
+      try {
+        const { text, source } = await ocrFile(file);
+        const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+        return { text, source, kind: (isPdf ? "pdf" : "image") as "image" | "pdf" };
+      } catch (error) {
+        console.warn(`OCR failed for ${file.name}:`, error);
+        return null;
+      }
+    })
+  );
+
+  // Collect successful OCR results
+  for (const result of ocrResults) {
+    if (result && result.text) {
+      texts.push(result.text);
+      sources.push({ name: result.source, chars: result.text.length, kind: result.kind });
     }
   }
 
