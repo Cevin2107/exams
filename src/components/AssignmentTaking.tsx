@@ -187,9 +187,10 @@ export function AssignmentTaking({ assignment, questions }: Props) {
                   </div>
                   <span className="text-xs font-semibold text-slate-500">{Number(q.points ?? 0).toFixed(3)} điểm</span>
                 </div>
-                {q.choices ? (
+                {q.type === "mcq" ? (
                   <div className="grid gap-3 md:grid-cols-2">
-                    {q.choices.map((choice, ci) => {
+                    {[0, 1, 2, 3].map((ci) => {
+                      const choice = q.choices?.[ci] || "";
                       const val = String.fromCharCode(65 + ci);
                       const checked = answers[q.id] === val;
                       return (
@@ -209,7 +210,7 @@ export function AssignmentTaking({ assignment, questions }: Props) {
                             onChange={() => setChoice(q.id, val)}
                           />
                           <span className="font-semibold">{val}.</span>
-                          <span>{choice}</span>
+                          {choice && <span>{choice}</span>}
                         </label>
                       );
                     })}

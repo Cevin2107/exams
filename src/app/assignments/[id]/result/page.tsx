@@ -132,9 +132,10 @@ export default async function ResultPage({
                     )}
                     {q.content && <p className="mt-1 text-base font-medium text-slate-900">{q.content}</p>}
                     
-                    {q.choices && q.type === "mcq" && (
+                    {q.type === "mcq" && (
                       <div className="mt-3 space-y-2">
-                        {q.choices.map((choice: string, ci: number) => {
+                        {[0, 1, 2, 3].map((ci: number) => {
+                          const choice = (q.choices as string[])?.[ci] || "";
                           const choiceLabel = String.fromCharCode(65 + ci);
                           const isStudentChoice = studentAnswer === choiceLabel;
                           const isCorrectAnswer = q.answer_key === choiceLabel;
@@ -149,7 +150,7 @@ export default async function ResultPage({
                                 !isStudentChoice && !isCorrectAnswer && "border-slate-200 bg-white"
                               )}
                             >
-                              <span className="font-semibold">{choiceLabel}.</span> {choice}
+                              <span className="font-semibold">{choiceLabel}.</span> {choice && <span>{choice}</span>}
                               {isCorrectAnswer && <span className="ml-2 text-emerald-600">✓ Đáp án đúng</span>}
                               {isStudentChoice && !isCorrectAnswer && <span className="ml-2 text-red-600">✗ Bạn chọn</span>}
                             </div>
