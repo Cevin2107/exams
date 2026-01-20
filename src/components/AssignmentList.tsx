@@ -44,9 +44,29 @@ export function AssignmentList({ assignments }: AssignmentListProps) {
     return parts.length ? parts.join(" ") : "Đã hết hạn";
   };
 
+  const formatDueDate = (dueAt?: string | null) => {
+    if (!dueAt) return null;
+    const date = new Date(dueAt);
+    if (isNaN(date.getTime())) return null;
+    
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    
+    return `${hours}:${minutes} ${day}/${month}/${year}`;
+  };
+
   const getDerivedStatus = useCallback((assignment: Assignment) => {
     if (now !== null && assignment.dueAt && isBefore(new Date(assignment.dueAt), new Date(now))) return "overdue" as const;
     return assignment.latestSubmission ? "completed" : "not_started";
+  }, [now]);
+
+  const isUrgent = useCallback((assignment: Assignment) => {
+    if (!assignment.dueAt || now === null) return false;
+    const diff = new Date(assignment.dueAt).getTime() - now;
+    return diff > 0 && diff < 24 * 60 * 60 * 1000; // < 1 ngày
   }, [now]);
 
   const filtered = useMemo(() => {
@@ -63,34 +83,48 @@ export function AssignmentList({ assignments }: AssignmentListProps) {
 
   const renderStatus = (assignment: Assignment) => {
     const status = getDerivedStatus(assignment);
-    const tone = status === "overdue"
-      ? "bg-red-100 text-red-700"
-      : status === "completed"
-        ? "bg-emerald-100 text-emerald-700"
-        : "bg-slate-100 text-slate-700";
-    const display = status === "overdue" ? "Quá hạn" : status === "completed" ? "Đã làm" : "Chưa làm";
-    return <span className={clsx("rounded-full px-3 py-1 text-xs font-semibold", tone)}>{display}</span>;
+    const urgent = isUrgent(assignment);
+    
+    return (
+      <div className="flex flex-wrap gap-2">
+        {urgent && (
+          <span className="rounded-md bg-red-600 px-2.5 py-1 text-xs font-semibold text-white">
+            GẤP!
+          </span>
+        )}
+        <span className={clsx(
+          "rounded-md px-2.5 py-1 text-xs font-semibold",
+          status === "overdue"
+            ? "bg-red-100 text-red-700"
+            : status === "completed"
+              ? "bg-emerald-100 text-emerald-700"
+              : "bg-slate-100 text-slate-700"
+        )}>
+          {status === "overdue" ? "Quá hạn" : status === "completed" ? "Đã làm" : "Chưa làm"}
+        </span>
+      </div>
+    );
   };
 
   return (
     <div className="space-y-4" suppressHydrationWarning>
       {!mounted && (
-        <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-3" suppressHydrationWarning>
-          <div className="h-10 rounded-lg bg-slate-100" />
-          <div className="h-10 rounded-lg bg-slate-100" />
-          <div className="h-10 rounded-lg bg-slate-100" />
+        <div className="grid gap-3 rounded-lg bg-white border border-slate-200 p-4 md:grid-cols-3" suppressHydrationWarning>
+          <div className="h-10 rounded-lg bg-slate-100 animate-pulse" />
+          <div className="h-10 rounded-lg bg-slate-100 animate-pulse" />
+          <div className="h-10 rounded-lg bg-slate-100 animate-pulse" />
         </div>
       )}
 
-      <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-3" suppressHydrationWarning>
+      <div className="grid gap-3 rounded-lg bg-white border border-slate-200 p-4 md:grid-cols-3" suppressHydrationWarning>
         <input
-          className="rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-inner focus:border-slate-400 focus:outline-none"
-          placeholder="Tìm kiếm theo tên bài"
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
+          placeholder="Tìm kiếm bài tập"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
         <select
-          className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
           value={subjectFilter}
           onChange={(e) => setSubjectFilter(e.target.value)}
         >
@@ -100,7 +134,7 @@ export function AssignmentList({ assignments }: AssignmentListProps) {
           ))}
         </select>
         <select
-          className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
         >
@@ -114,39 +148,57 @@ export function AssignmentList({ assignments }: AssignmentListProps) {
       <div className="grid gap-4 md:grid-cols-2" suppressHydrationWarning>
         {filtered.map((assignment) => {
           const overdue = now !== null && assignment.dueAt ? isBefore(new Date(assignment.dueAt), new Date(now)) : false;
+          const urgent = isUrgent(assignment);
           const latest = assignment.latestSubmission;
           const dueText = formatRemaining(assignment.dueAt);
+          const dueDateTime = formatDueDate(assignment.dueAt);
           return (
             <div
               key={assignment.id}
-              className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+              className={clsx(
+                "flex flex-col gap-3 rounded-lg border bg-white p-4 transition hover:shadow-md",
+                urgent ? "border-red-300" : "border-slate-200"
+              )}
               suppressHydrationWarning
             >
               <div className="flex items-start justify-between gap-2" suppressHydrationWarning>
                 <div suppressHydrationWarning>
-                  <p className="text-xs uppercase tracking-wide text-slate-500">{assignment.subject} · {assignment.grade}</p>
-                  <h2 className="text-lg font-semibold text-slate-900">{assignment.title}</h2>
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{assignment.subject} · {assignment.grade}</p>
+                  <h2 className="text-base font-semibold text-slate-900 mt-1">{assignment.title}</h2>
                 </div>
                 {renderStatus(assignment)}
               </div>
-              <div className="flex items-center justify-between text-sm text-slate-600" suppressHydrationWarning>
-                <span>Hạn nộp: {dueText}</span>
-                {assignment.durationMinutes ? <span>Thời gian: {assignment.durationMinutes} phút</span> : null}
+              <div className="space-y-1 text-sm" suppressHydrationWarning>
+                {dueDateTime && (
+                  <div className="text-slate-600">
+                    <span className="font-medium">Hạn nộp:</span> {dueDateTime}
+                  </div>
+                )}
+                <div className={clsx(urgent && "font-semibold text-red-700", !urgent && "text-slate-600")}>
+                  <span className="font-medium">Thời gian còn lại:</span> {dueText}
+                </div>
+                {assignment.durationMinutes && (
+                  <div className="text-slate-600">
+                    <span className="font-medium">Thời gian làm bài:</span> {assignment.durationMinutes} phút
+                  </div>
+                )}
               </div>
               <div className="flex items-center justify-between" suppressHydrationWarning>
-                <span className={clsx("text-sm font-medium", overdue ? "text-red-600" : "text-slate-700")}>Tổng điểm: {assignment.totalScore}</span>
+                <span className="text-sm font-medium text-slate-700">
+                  {assignment.totalScore} điểm
+                </span>
                 <div className="flex gap-2">
                   {latest ? (
                     <>
                       <Link
                         href={`/assignments/${assignment.id}/result?sid=${latest.id}`}
-                        className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:shadow"
+                        className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                       >
                         Lịch sử
                       </Link>
                       <Link
                         href={`/assignments/${assignment.id}`}
-                        className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow"
+                        className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-800"
                       >
                         Làm lại
                       </Link>
@@ -156,10 +208,10 @@ export function AssignmentList({ assignments }: AssignmentListProps) {
                       href={overdue ? "#" : `/assignments/${assignment.id}`}
                       aria-disabled={overdue}
                       className={clsx(
-                        "rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition",
+                        "rounded-lg px-4 py-1.5 text-sm font-medium transition",
                         overdue
                           ? "cursor-not-allowed bg-slate-200 text-slate-500"
-                          : "bg-slate-900 text-white hover:-translate-y-0.5 hover:shadow"
+                          : "bg-slate-900 text-white hover:bg-slate-800"
                       )}
                     >
                       {overdue ? "Quá hạn" : "Làm bài"}
@@ -171,7 +223,7 @@ export function AssignmentList({ assignments }: AssignmentListProps) {
           );
         })}
         {filtered.length === 0 && (
-          <div className="rounded-xl border border-dashed border-slate-200 bg-white p-6 text-center text-sm text-slate-500">
+          <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
             Không có bài tập phù hợp.
           </div>
         )}

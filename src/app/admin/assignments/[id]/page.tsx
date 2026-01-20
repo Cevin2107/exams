@@ -857,41 +857,67 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
           </div>
         </div>
 
-        <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-slate-900">Báo cáo nhanh</h3>
+            <h3 className="text-lg font-semibold text-slate-900">Báo cáo chi tiết</h3>
             {analyticsLoading && <span className="text-xs text-slate-500">Đang tải...</span>}
           </div>
           {analytics ? (
             <>
-              <div className="grid gap-3 md:grid-cols-4">
-                <div className="rounded-lg bg-slate-50 p-3 text-sm">
-                  <p className="text-slate-500">Điểm trung bình</p>
-                  <p className="text-xl font-semibold text-slate-900">{analytics.averageScore.toFixed(2)}</p>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-sm font-medium text-slate-600 mb-2">Điểm số</p>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <p className="text-xs text-slate-500">Trung bình</p>
+                      <p className="text-2xl font-bold text-blue-600">{analytics.averageScore.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">Cao nhất</p>
+                      <p className="text-2xl font-bold text-emerald-600">{analytics.maxScore.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">Thấp nhất</p>
+                      <p className="text-2xl font-bold text-red-600">{analytics.minScore.toFixed(2)}</p>
+                    </div>
+                  </div>
                 </div>
-                <div className="rounded-lg bg-slate-50 p-3 text-sm">
-                  <p className="text-slate-500">Cao nhất / Thấp nhất</p>
-                  <p className="text-xl font-semibold text-slate-900">{analytics.maxScore.toFixed(2)} / {analytics.minScore.toFixed(2)}</p>
-                </div>
-                <div className="rounded-lg bg-slate-50 p-3 text-sm">
-                  <p className="text-slate-500">Thời gian TB</p>
-                  <p className="text-xl font-semibold text-slate-900">{Math.round((analytics.averageDuration || 0) / 60)} phút</p>
-                </div>
-                <div className="rounded-lg bg-slate-50 p-3 text-sm">
-                  <p className="text-slate-500">Số lần nộp</p>
-                  <p className="text-xl font-semibold text-slate-900">{analytics.submissionCount}</p>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-sm font-medium text-slate-600 mb-2">Thống kê</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-xs text-slate-500">Số lần nộp</p>
+                      <p className="text-2xl font-bold text-slate-900">{analytics.submissionCount}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">Thời gian TB</p>
+                      <p className="text-2xl font-bold text-slate-900">{Math.round((analytics.averageDuration || 0) / 60)} ph</p>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div>
-                <p className="text-sm font-semibold text-slate-800 mb-2">Câu sai nhiều</p>
+                <p className="text-sm font-semibold text-slate-800 mb-3">Câu sai nhiều nhất (tỉ lệ đúng thấp)</p>
                 {analytics.questionStats.length === 0 ? (
                   <p className="text-sm text-slate-500">Chưa có dữ liệu.</p>
                 ) : (
                   <div className="space-y-2">
-                    {analytics.questionStats.map((q) => (
-                      <div key={q.questionId} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-sm">
-                        <span className="truncate text-slate-800">{q.content}</span>
-                        <span className="text-xs font-semibold text-slate-600">{Math.round(q.correctRate * 100)}% đúng ({q.total} lần)</span>
+                    {analytics.questionStats.map((q, idx) => (
+                      <div key={q.questionId} className="flex items-start justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="rounded-md bg-slate-200 px-2 py-0.5 text-xs font-bold text-slate-700">Câu {idx + 1}</span>
+                            <span className={`text-xs font-semibold ${
+                              q.correctRate >= 0.8 ? 'text-emerald-600' : 
+                              q.correctRate >= 0.5 ? 'text-amber-600' : 
+                              'text-red-600'
+                            }`}>
+                              {Math.round(q.correctRate * 100)}% đúng
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-800">{q.content}</p>
+                        </div>
+                        <span className="text-xs text-slate-500 ml-3">{q.total} lần</span>
                       </div>
                     ))}
                   </div>
