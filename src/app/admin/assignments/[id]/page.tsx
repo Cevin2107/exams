@@ -47,11 +47,18 @@ interface EditQuestionForm {
   imageUrl: string;
 }
 
+interface AiQuestion {
+  question: string;
+  options: Record<"A" | "B" | "C" | "D", string>;
+  correct_answer: "A" | "B" | "C" | "D";
+}
+
 export default function AssignmentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
+  const [showAiForm, setShowAiForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [assignmentId, setAssignmentId] = useState<string>("");
   const [deleting, setDeleting] = useState(false);
@@ -59,6 +66,19 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const [imagePreview, setImagePreview] = useState("");
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
+  
+  // AI generation states
+  const [aiFiles, setAiFiles] = useState<File[]>([]);
+  const [aiTextInput, setAiTextInput] = useState("");
+  const [aiQuestions, setAiQuestions] = useState<AiQuestion[]>([]);
+  const [aiPreviewText, setAiPreviewText] = useState("");
+  const [aiSources, setAiSources] = useState<Array<{ name: string; chars: number; kind: string }>>([]);
+  const [aiStatus, setAiStatus] = useState<"idle" | "running" | "error" | "done">("idle");
+  const [aiMessage, setAiMessage] = useState("");
+  const [aiError, setAiError] = useState("");
+  const [savingAi, setSavingAi] = useState(false);
+  const [selectedAiQuestionIndices, setSelectedAiQuestionIndices] = useState<Set<number>>(new Set());
   const [editForm, setEditForm] = useState({
     title: "",
     subject: "",
@@ -365,6 +385,228 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     }
   }
 
+  // Multi-select functions for existing questions
+  const toggleQuestionSelect = (id: string) => {
+    setSelectedQuestionIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllQuestions = () => {
+    if (selectedQuestionIds.size === questions.length) {
+      setSelectedQuestionIds(new Set());
+    } else {
+      setSelectedQuestionIds(new Set(questions.map((q) => q.id)));
+    }
+  };
+
+  const deleteSelectedQuestions = async () => {
+    if (selectedQuestionIds.size === 0) return;
+    if (!confirm(`Xóa ${selectedQuestionIds.size} câu hỏi đã chọn?`)) return;
+    
+    try {
+      await Promise.all(
+        Array.from(selectedQuestionIds).map((id) =>
+          fetch(`/api/admin/questions/${id}`, { method: "DELETE" })
+        )
+      );
+      setSelectedQuestionIds(new Set());
+      await loadData(assignmentId);
+    } catch (err) {
+      console.error("Lỗi xóa câu hỏi:", err);
+    }
+  };
+
+  // AI generation functions
+  const addAiFiles = (incoming: File[]) => {
+    if (!incoming.length) return;
+    setAiFiles((prev) => [...prev, ...incoming].slice(0, 20));
+    setAiError("");
+  };
+
+  const handleAiFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    addAiFiles(files);
+    e.target.value = "";
+  };
+
+  const handleAiPaste = (e: React.ClipboardEvent<HTMLTextAreaElement | HTMLDivElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.includes("image")) {
+        const file = items[i].getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (files.length) {
+      e.preventDefault();
+      addAiFiles(files);
+    }
+  };
+
+  const removeAiFile = (index: number) => {
+    setAiFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const removeAllAiFiles = () => {
+    setAiFiles([]);
+    setAiTextInput("");
+  };
+
+  const addEmptyAiQuestion = () => {
+    setAiQuestions((prev) => [
+      ...prev,
+      {
+        question: "",
+        options: { A: "", B: "", C: "", D: "" },
+        correct_answer: "A",
+      },
+    ]);
+  };
+
+  const updateAiQuestion = (index: number, value: Partial<AiQuestion>) => {
+    setAiQuestions((prev) => prev.map((q, i) => (i === index ? { ...q, ...value } : q)));
+  };
+
+  const updateAiOption = (index: number, key: "A" | "B" | "C" | "D", value: string) => {
+    setAiQuestions((prev) =>
+      prev.map((q, i) => (i === index ? { ...q, options: { ...q.options, [key]: value } } : q))
+    );
+  };
+
+  const removeAiQuestion = (index: number) => {
+    setAiQuestions((prev) => prev.filter((_, i) => i !== index));
+    setSelectedAiQuestionIndices((prev) => {
+      const next = new Set(prev);
+      next.delete(index);
+      return next;
+    });
+  };
+
+  const toggleAiQuestionSelect = (index: number) => {
+    setSelectedAiQuestionIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllAiQuestions = () => {
+    if (selectedAiQuestionIndices.size === aiQuestions.length) {
+      setSelectedAiQuestionIndices(new Set());
+    } else {
+      setSelectedAiQuestionIndices(new Set(aiQuestions.map((_, i) => i)));
+    }
+  };
+
+  const removeSelectedAiQuestions = () => {
+    if (selectedAiQuestionIndices.size === 0) return;
+    if (!confirm(`Xóa ${selectedAiQuestionIndices.size} câu hỏi đã chọn?`)) return;
+    setAiQuestions((prev) => prev.filter((_, i) => !selectedAiQuestionIndices.has(i)));
+    setSelectedAiQuestionIndices(new Set());
+  };
+
+  const handleGenerateAi = async () => {
+    if (!aiFiles.length && !aiTextInput.trim()) {
+      setAiError("Thêm ít nhất 1 ảnh/PDF hoặc văn bản để AI xử lý.");
+      return;
+    }
+    setAiStatus("running");
+    setAiMessage("Đang quét nội dung và sinh câu hỏi...");
+    setAiError("");
+
+    const formData = new FormData();
+    aiFiles.forEach((file) => formData.append("files", file));
+    if (aiTextInput.trim()) {
+      formData.append("manualText", aiTextInput.trim());
+    }
+
+    try {
+      const res = await fetch("/api/admin/ai/generate", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const detail = err.details ? `\n${err.details}` : "";
+        setAiError((err.error || "AI gặp lỗi, vui lòng thử lại.") + detail);
+        setAiStatus("error");
+        return;
+      }
+
+      const data = await res.json();
+      // Thêm câu hỏi mới vào danh sách hiện có
+      setAiQuestions((prev) => [...prev, ...(data.questions || [])]);
+      setAiPreviewText(data.cleanedText || "");
+      setAiSources(data.sources || []);
+      setAiStatus("done");
+      setAiMessage("Đã sinh câu hỏi, hãy rà soát và chỉnh sửa trước khi lưu.");
+    } catch {
+      setAiError("Không thể tạo câu hỏi bằng AI lúc này.");
+      setAiStatus("error");
+    }
+  };
+
+  const handleSaveAiQuestions = async () => {
+    if (aiQuestions.length === 0) {
+      setAiError("Chưa có câu hỏi để lưu.");
+      return;
+    }
+
+    setSavingAi(true);
+    try {
+      for (const [index, q] of aiQuestions.entries()) {
+        const questionRes = await fetch("/api/admin/questions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            assignmentId: assignmentId,
+            type: "mcq",
+            content: q.question,
+            choices: [q.options.A, q.options.B, q.options.C, q.options.D],
+            answerKey: q.correct_answer,
+            order: questions.length + index + 1,
+          }),
+        });
+
+        if (!questionRes.ok) {
+          throw new Error(`Lỗi lưu câu hỏi ${index + 1}`);
+        }
+      }
+
+      // Reset AI form
+      setAiQuestions([]);
+      setAiFiles([]);
+      setAiTextInput("");
+      setAiPreviewText("");
+      setAiSources([]);
+      setAiStatus("idle");
+      setAiMessage("");
+      setShowAiForm(false);
+      
+      // Reload questions
+      await loadData(assignmentId);
+    } catch (err) {
+      console.error("Lỗi lưu câu hỏi AI", err);
+      setAiError("Không thể lưu câu hỏi, vui lòng thử lại.");
+    } finally {
+      setSavingAi(false);
+    }
+  };
+
   if (loading) return <div className="p-8 text-center">Đang tải...</div>;
   if (!assignment) return <div className="p-8 text-center">Không tìm thấy bài tập</div>;
 
@@ -566,12 +808,40 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             <h2 className="text-lg font-semibold text-slate-900">Câu hỏi ({questions.length})</h2>
             <p className="text-sm text-slate-600">Tổng điểm: {assignment.total_score}</p>
           </div>
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow"
-          >
-            {showAddForm ? "Hủy" : "+ Thêm câu hỏi"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {questions.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={toggleSelectAllQuestions}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:border-slate-400"
+                >
+                  {selectedQuestionIds.size === questions.length ? "Bỏ chọn tất cả" : "Chọn tất cả"}
+                </button>
+                {selectedQuestionIds.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={deleteSelectedQuestions}
+                    className="rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 shadow-sm hover:border-red-400"
+                  >
+                    Xóa đã chọn ({selectedQuestionIds.size})
+                  </button>
+                )}
+              </>
+            )}
+            <button
+              onClick={() => setShowAiForm(!showAiForm)}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow"
+            >
+              {showAiForm ? "Đóng AI" : "🤖 Tạo bằng AI"}
+            </button>
+            <button
+              onClick={() => setShowAddForm(!showAddForm)}
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow"
+            >
+              {showAddForm ? "Hủy" : "+ Thêm câu hỏi"}
+            </button>
+          </div>
         </div>
 
         <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -619,6 +889,244 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             <p className="text-sm text-slate-500">Chưa có thống kê.</p>
           )}
         </div>
+
+        {showAiForm && (
+          <div className="space-y-5 rounded-xl border border-indigo-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-slate-900">🤖 Tạo câu hỏi bằng AI (OCR)</h3>
+              <button
+                type="button"
+                onClick={() => setShowAiForm(false)}
+                className="text-sm font-semibold text-slate-600 hover:text-slate-800"
+              >
+                Đóng
+              </button>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="space-y-3">
+                <label className="block text-sm font-semibold text-slate-800">Ảnh / PDF (paste hoặc upload)</label>
+                <div
+                  onPaste={handleAiPaste}
+                  className="flex min-h-[160px] flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-indigo-300 bg-indigo-50 px-4 text-sm text-slate-700"
+                >
+                  <p className="font-semibold text-indigo-700">Ctrl + V để dán nhiều ảnh cùng lúc</p>
+                  <p className="text-center text-xs text-slate-600">Hỗ trợ nhiều ảnh và PDF, tối đa 8MB mỗi file</p>
+                  <div className="flex gap-2">
+                    <label className="cursor-pointer rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700">
+                      Chọn file
+                      <input type="file" multiple accept="image/*,.pdf" className="hidden" onChange={handleAiFileInput} />
+                    </label>
+                    {aiFiles.length > 0 && (
+                      <button
+                        type="button"
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:border-slate-400"
+                        onClick={removeAllAiFiles}
+                      >
+                        Xóa file/text (giữ câu hỏi)
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {aiFiles.length > 0 && (
+                  <div className="space-y-2 rounded-lg border border-slate-200 p-3 text-sm">
+                    <p className="text-xs font-semibold text-slate-600">Đã chọn ({aiFiles.length})</p>
+                    {aiFiles.map((file, idx) => (
+                      <div key={`${file.name}-${idx}`} className="flex items-center justify-between rounded border border-slate-100 px-2 py-1">
+                        <span className="truncate text-slate-800">{file.name}</span>
+                        <button
+                          type="button"
+                          className="text-xs font-semibold text-red-600 hover:text-red-700"
+                          onClick={() => removeAiFile(idx)}
+                        >
+                          Xóa
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <label className="block text-sm font-semibold text-slate-800">Văn bản bổ sung (tùy chọn)</label>
+                <textarea
+                  value={aiTextInput}
+                  onChange={(e) => setAiTextInput(e.target.value)}
+                  onPaste={handleAiPaste}
+                  rows={8}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none"
+                  placeholder="Dán nội dung sẵn có hoặc mô tả ngắn..."
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleGenerateAi}
+                    disabled={aiStatus === "running"}
+                    className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow disabled:opacity-60"
+                  >
+                    {aiStatus === "running" ? "AI đang xử lý..." : "Tạo câu hỏi bằng AI"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiQuestions([]);
+                      setAiPreviewText("");
+                      setAiSources([]);
+                      setAiStatus("idle");
+                      setAiMessage("");
+                      setAiError("");
+                    }}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:border-slate-400"
+                  >
+                    Xóa kết quả AI
+                  </button>
+                  <div className="text-xs font-semibold text-slate-600">
+                    {aiStatus === "running" && aiMessage}
+                    {aiStatus === "done" && aiMessage}
+                  </div>
+                </div>
+                {aiError && <p className="text-sm font-semibold text-red-600">{aiError}</p>}
+              </div>
+            </div>
+
+            {aiSources.length > 0 && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                <p className="font-semibold text-slate-800">Nguồn đã quét</p>
+                <div className="mt-1 grid gap-2 md:grid-cols-2">
+                  {aiSources.map((s, idx) => (
+                    <div key={`${s.name}-${idx}`} className="flex items-center justify-between rounded border border-slate-200 bg-white px-2 py-1">
+                      <span className="truncate">{s.name}</span>
+                      <span className="text-[11px] text-slate-500">{s.kind} · {s.chars} ký tự</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {aiPreviewText && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                <p className="text-xs font-semibold text-slate-600">Text đã làm sạch (rút gọn)</p>
+                <pre className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed">{aiPreviewText}</pre>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">Danh sách câu hỏi AI ({aiQuestions.length})</h3>
+                <p className="text-sm text-slate-600">Chỉnh sửa tự do trước khi lưu xuống CSDL.</p>
+              </div>
+              <div className="flex gap-2">
+                {aiQuestions.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={toggleSelectAllAiQuestions}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:border-slate-400"
+                    >
+                      {selectedAiQuestionIndices.size === aiQuestions.length ? "Bỏ chọn tất cả" : "Chọn tất cả"}
+                    </button>
+                    {selectedAiQuestionIndices.size > 0 && (
+                      <button
+                        type="button"
+                        onClick={removeSelectedAiQuestions}
+                        className="rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 shadow-sm hover:border-red-400"
+                      >
+                        Xóa đã chọn ({selectedAiQuestionIndices.size})
+                      </button>
+                    )}
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={addEmptyAiQuestion}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:border-slate-400"
+                >
+                  + Thêm câu mới
+                </button>
+              </div>
+            </div>
+
+            {aiQuestions.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-600">
+                Chưa có câu hỏi. Hãy dùng AI tạo câu hỏi hoặc thêm thủ công.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {aiQuestions.map((q, idx) => (
+                  <div key={`ai-q-${idx}`} className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedAiQuestionIndices.has(idx)}
+                          onChange={() => toggleAiQuestionSelect(idx)}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                        <div className="text-xs font-semibold text-slate-500">Câu {idx + 1}</div>
+                      </div>
+                      <button
+                        type="button"
+                        className="text-xs font-semibold text-red-600 hover:text-red-700"
+                        onClick={() => removeAiQuestion(idx)}
+                      >
+                        Xóa
+                      </button>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700">Nội dung</label>
+                      <textarea
+                        value={q.question}
+                        onChange={(e) => updateAiQuestion(idx, { question: e.target.value })}
+                        rows={2}
+                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      {(["A", "B", "C", "D"] as Array<"A" | "B" | "C" | "D">).map((key) => (
+                        <div key={key} className="space-y-1">
+                          <label className="text-xs font-semibold text-slate-700">Đáp án {key}</label>
+                          <input
+                            value={q.options[key]}
+                            onChange={(e) => updateAiOption(idx, key, e.target.value)}
+                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <label className="text-xs font-semibold text-slate-700">Đáp án đúng</label>
+                      <select
+                        value={q.correct_answer}
+                        onChange={(e) => updateAiQuestion(idx, { correct_answer: e.target.value as AiQuestion["correct_answer"] })}
+                        className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none"
+                      >
+                        {"ABCD".split("").map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-3 border-t border-slate-100 pt-3 md:flex-row md:items-center md:justify-between">
+              <div className="text-sm text-slate-600">
+                AI chỉ hỗ trợ gợi ý. Admin cần rà soát trước khi lưu xuống CSDL.
+              </div>
+              <button
+                type="button"
+                onClick={handleSaveAiQuestions}
+                disabled={savingAi || aiQuestions.length === 0}
+                className="rounded-lg bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow disabled:opacity-60"
+              >
+                {savingAi ? "Đang lưu..." : `Lưu ${aiQuestions.length} câu hỏi vào bài tập`}
+              </button>
+            </div>
+          </div>
+        )}
 
         {showAddForm && (
           <form onSubmit={handleAddQuestion} className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -736,10 +1244,17 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             questions.map((q, idx) => (
               <div key={q.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <p className="text-xs uppercase tracking-wide text-slate-500">
-                      Câu {idx + 1} · {q.type === "mcq" ? "Trắc nghiệm" : "Tự luận"} · {Number(q.points ?? 0).toFixed(3)} điểm
-                    </p>
+                  <div className="flex items-start gap-3 flex-1">
+                    <input
+                      type="checkbox"
+                      checked={selectedQuestionIds.has(q.id)}
+                      onChange={() => toggleQuestionSelect(q.id)}
+                      className="mt-1 h-4 w-4 rounded border-slate-300"
+                    />
+                    <div className="flex-1">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">
+                        Câu {idx + 1} · {q.type === "mcq" ? "Trắc nghiệm" : "Tự luận"} · {Number(q.points ?? 0).toFixed(3)} điểm
+                      </p>
                     {q.imageUrl && (
                       <div className="my-3 rounded-lg border border-slate-200 p-2">
                         <img src={q.imageUrl} alt="Câu hỏi" className="max-h-64 w-auto rounded" />
@@ -758,6 +1273,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                         ))}
                       </div>
                     )}
+                  </div>
                   </div>
                   <div className="flex flex-col items-end gap-2 text-xs">
                     <button

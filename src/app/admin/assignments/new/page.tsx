@@ -33,6 +33,7 @@ export default function NewAssignmentPage() {
   const [aiMessage, setAiMessage] = useState("");
   const [aiError, setAiError] = useState("");
   const [savingAi, setSavingAi] = useState(false);
+  const [selectedQuestionIndices, setSelectedQuestionIndices] = useState<Set<number>>(new Set());
 
   const resolveSubjectAndGrade = () => {
     const resolvedSubject = subjectSelect === CUSTOM_VALUE ? subjectCustom.trim() : subjectSelect;
@@ -117,6 +118,11 @@ export default function NewAssignmentPage() {
     setAiFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const removeAllAiFiles = () => {
+    setAiFiles([]);
+    setAiTextInput("");
+  };
+
   const addEmptyAiQuestion = () => {
     setAiQuestions((prev) => [
       ...prev,
@@ -140,6 +146,38 @@ export default function NewAssignmentPage() {
 
   const removeAiQuestion = (index: number) => {
     setAiQuestions((prev) => prev.filter((_, i) => i !== index));
+    setSelectedQuestionIndices((prev) => {
+      const next = new Set(prev);
+      next.delete(index);
+      return next;
+    });
+  };
+
+  const toggleQuestionSelect = (index: number) => {
+    setSelectedQuestionIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedQuestionIndices.size === aiQuestions.length) {
+      setSelectedQuestionIndices(new Set());
+    } else {
+      setSelectedQuestionIndices(new Set(aiQuestions.map((_, i) => i)));
+    }
+  };
+
+  const removeSelectedQuestions = () => {
+    if (selectedQuestionIndices.size === 0) return;
+    if (!confirm(`Xóa ${selectedQuestionIndices.size} câu hỏi đã chọn?`)) return;
+    setAiQuestions((prev) => prev.filter((_, i) => !selectedQuestionIndices.has(i)));
+    setSelectedQuestionIndices(new Set());
   };
 
   const handleGenerateAi = async () => {
@@ -172,7 +210,8 @@ export default function NewAssignmentPage() {
       }
 
       const data = await res.json();
-      setAiQuestions(data.questions || []);
+      // Thêm câu hỏi mới vào danh sách hiện có thay vì thay thế
+      setAiQuestions((prev) => [...prev, ...(data.questions || [])]);
       setAiPreviewText(data.cleanedText || "");
       setAiSources(data.sources || []);
       setAiStatus("done");
@@ -524,9 +563,9 @@ export default function NewAssignmentPage() {
                       <button
                         type="button"
                         className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:border-slate-400"
-                        onClick={() => setAiFiles([])}
+                        onClick={removeAllAiFiles}
                       >
-                        Xóa danh sách file
+                        Xóa file/text (giữ câu hỏi)
                       </button>
                     )}
                   </div>
@@ -619,13 +658,35 @@ export default function NewAssignmentPage() {
                 <h3 className="text-lg font-semibold text-slate-900">Danh sách câu hỏi ({aiQuestions.length})</h3>
                 <p className="text-sm text-slate-600">Chỉnh sửa tự do trước khi lưu xuống CSDL.</p>
               </div>
-              <button
-                type="button"
-                onClick={addEmptyAiQuestion}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:border-slate-400"
-              >
-                + Thêm câu mới
-              </button>
+              <div className="flex gap-2">
+                {aiQuestions.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={toggleSelectAll}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:border-slate-400"
+                    >
+                      {selectedQuestionIndices.size === aiQuestions.length ? "Bỏ chọn tất cả" : "Chọn tất cả"}
+                    </button>
+                    {selectedQuestionIndices.size > 0 && (
+                      <button
+                        type="button"
+                        onClick={removeSelectedQuestions}
+                        className="rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 shadow-sm hover:border-red-400"
+                      >
+                        Xóa đã chọn ({selectedQuestionIndices.size})
+                      </button>
+                    )}
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={addEmptyAiQuestion}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm hover:border-slate-400"
+                >
+                  + Thêm câu mới
+                </button>
+              </div>
             </div>
 
             {aiQuestions.length === 0 ? (
@@ -637,7 +698,15 @@ export default function NewAssignmentPage() {
                 {aiQuestions.map((q, idx) => (
                   <div key={`ai-q-${idx}`} className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="flex items-start justify-between">
-                      <div className="text-xs font-semibold text-slate-500">Câu {idx + 1}</div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedQuestionIndices.has(idx)}
+                          onChange={() => toggleQuestionSelect(idx)}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                        <div className="text-xs font-semibold text-slate-500">Câu {idx + 1}</div>
+                      </div>
                       <button
                         type="button"
                         className="text-xs font-semibold text-red-600 hover:text-red-700"
