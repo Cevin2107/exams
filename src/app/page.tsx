@@ -2,6 +2,10 @@ import { HeaderBar } from "@/components/HeaderBar";
 import { AssignmentList } from "@/components/AssignmentList";
 import { fetchAssignmentsWithHistory } from "@/lib/supabaseHelpers";
 
+// Disable caching để luôn hiển thị dữ liệu mới nhất
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default async function HomePage() {
   const assignments = await fetchAssignmentsWithHistory();
 

@@ -2,6 +2,10 @@ import { notFound } from "next/navigation";
 import { AssignmentTaking } from "@/components/AssignmentTaking";
 import { fetchAssignmentById, fetchQuestions } from "@/lib/supabaseHelpers";
 
+// Disable caching để luôn hiển thị dữ liệu mới nhất
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default async function AssignmentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const assignment = await fetchAssignmentById(id);

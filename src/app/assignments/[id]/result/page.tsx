@@ -3,6 +3,10 @@ import { notFound } from "next/navigation";
 import clsx from "clsx";
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin";
 
+// Disable caching để luôn hiển thị dữ liệu mới nhất
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 type SubmissionSummary = {
   id: string;
   score: number | null;

@@ -3,6 +3,10 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { fetchAllAssignmentsAdmin } from "@/lib/supabaseHelpers";
 
+// Disable caching để luôn hiển thị dữ liệu mới nhất
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export default async function AdminDashboardPage() {
   const isAuth = await checkAdminAuth();
   if (!isAuth) redirect("/admin");
