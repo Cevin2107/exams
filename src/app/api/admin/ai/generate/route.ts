@@ -36,7 +36,8 @@ export async function POST(req: NextRequest) {
     console.error("AI generation error", error);
     const isDev = process.env.NODE_ENV !== "production";
     const message = error instanceof Error ? error.message : "Unknown error";
-    const details = (error as any)?.details || undefined;
+    const errorWithDetails = error as { details?: string };
+    const details = errorWithDetails?.details || undefined;
     return NextResponse.json(
       {
         error: isDev ? message : "Không thể tạo câu hỏi bằng AI lúc này, vui lòng thử lại sau.",
