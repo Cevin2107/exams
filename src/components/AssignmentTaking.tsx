@@ -148,7 +148,7 @@ export function AssignmentTaking({ assignment, questions }: Props) {
       hasAutoSubmitted.current = true;
       handleSubmit(true);
     }
-  }, [timeUp, dueExpired, submitting, studentName]);
+  }, [timeUp, dueExpired, submitting, studentName, handleSubmit]);
 
   // Cập nhật trạng thái session khi rời trang
   useEffect(() => {
