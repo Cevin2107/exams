@@ -36,7 +36,7 @@ interface Analytics {
   minScore: number;
   maxScore: number;
   averageDuration: number;
-  questionStats: Array<{ questionId: string; content: string; correctRate: number; total: number }>;
+  questionStats: Array<{ questionId: string; content: string; correctRate: number; total: number; order: number }>;
 }
 
 interface EditQuestionForm {
@@ -967,11 +967,11 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                   <p className="text-sm text-slate-500">Chưa có dữ liệu.</p>
                 ) : (
                   <div className="space-y-2">
-                    {analytics.questionStats.map((q, idx) => (
+                    {analytics.questionStats.map((q) => (
                       <div key={q.questionId} className="flex items-start justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-1">
-                            <span className="rounded-md bg-slate-200 px-2 py-0.5 text-xs font-bold text-slate-700">Câu {idx + 1}</span>
+                            <span className="rounded-md bg-slate-200 px-2 py-0.5 text-xs font-bold text-slate-700">Câu {q.order}</span>
                             <span className={`text-xs font-semibold ${
                               q.correctRate >= 0.8 ? 'text-emerald-600' : 
                               q.correctRate >= 0.5 ? 'text-amber-600' : 

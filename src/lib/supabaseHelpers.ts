@@ -398,7 +398,7 @@ export async function fetchAssignmentAnalytics(assignmentId: string) {
 
   if (submissionIds.length > 0) {
     const [{ data: questions, error: qErr }, { data: answers, error: aErr }] = await Promise.all([
-      supabase.from("questions").select("id, content, answer_key, type").eq("assignment_id", assignmentId),
+      supabase.from("questions").select("id, content, answer_key, type, order").eq("assignment_id", assignmentId).order("order", { ascending: true }),
       supabase.from("answers").select("question_id, is_correct").in("submission_id", submissionIds),
     ]);
 
@@ -410,7 +410,7 @@ export async function fetchAssignmentAnalytics(assignmentId: string) {
       const total = related.length;
       const correct = related.filter((a) => a.is_correct === true).length;
       const correctRate = total ? correct / total : 0;
-      return { questionId: q.id, content: q.content, correctRate, total };
+      return { questionId: q.id, content: q.content, correctRate, total, order: q.order };
     });
   }
 
