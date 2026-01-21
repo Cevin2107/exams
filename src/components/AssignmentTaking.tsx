@@ -21,6 +21,18 @@ const formatClock = (seconds: number) => {
   return `${mins}:${secs}`;
 };
 
+const formatVietnamTime = (date: Date) => {
+  // Chuyển sang múi giờ Việt Nam (UTC+7)
+  const options: Intl.DateTimeFormatOptions = {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  };
+  return new Intl.DateTimeFormat('vi-VN', options).format(date);
+};
+
 export function AssignmentTaking({ assignment, questions }: Props) {
   const router = useRouter();
   const [studentName, setStudentName] = useState<string | null>(null);
@@ -28,14 +40,13 @@ export function AssignmentTaking({ assignment, questions }: Props) {
   const hasTimer = Boolean(assignment.durationMinutes);
   const initialSeconds = hasTimer ? (assignment.durationMinutes ?? 0) * 60 : 0;
   const [remaining, setRemaining] = useState(initialSeconds);
-  const [dueRemaining, setDueRemaining] = useState<number | null>(
-    assignment.dueAt ? Math.max(0, Math.floor((new Date(assignment.dueAt).getTime() - Date.now()) / 1000)) : null
-  );
+  const [currentVietnamTime, setCurrentVietnamTime] = useState(new Date());
+  const [serverDeadline, setServerDeadline] = useState<Date | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const draftKey = useMemo(() => `assignment-draft-${assignment.id}`, [assignment.id]);
   const hasAutoSubmitted = useRef(false);
 
-  // Kiểm tra xem học sinh đã nhập tên chưa
+  // Kiểm tra xem học sinh đã nhập tên chưa và lấy deadline từ server
   useEffect(() => {
     if (typeof window === "undefined") return;
     
@@ -50,25 +61,39 @@ export function AssignmentTaking({ assignment, questions }: Props) {
     
     setStudentName(savedName);
     setSessionId(savedSessionId);
+
+    // Lấy deadline từ server
+    fetch(`/api/student-sessions/check-deadline?sessionId=${savedSessionId}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.deadlineAt) {
+          setServerDeadline(new Date(data.deadlineAt));
+        }
+      })
+      .catch(err => console.error("Failed to fetch deadline:", err));
   }, [assignment.id, router]);
 
+  // Cập nhật đồng hồ thời gian thực Việt Nam
   useEffect(() => {
-    if (!hasTimer) return;
-    setRemaining(initialSeconds);
     const id = setInterval(() => {
-      setRemaining((prev) => Math.max(prev - 1, 0));
+      setCurrentVietnamTime(new Date());
     }, 1000);
     return () => clearInterval(id);
-  }, [hasTimer, initialSeconds]);
+  }, []);
 
+  // Tính thời gian còn lại dựa trên server deadline
   useEffect(() => {
-    if (!assignment.dueAt) return;
+    if (!serverDeadline) return;
+    
     const id = setInterval(() => {
-      const next = Math.floor((new Date(assignment.dueAt).getTime() - Date.now()) / 1000);
-      setDueRemaining(Math.max(next, 0));
+      const now = new Date();
+      const remainingMs = serverDeadline.getTime() - now.getTime();
+      const remainingSec = Math.max(0, Math.floor(remainingMs / 1000));
+      setRemaining(remainingSec);
     }, 1000);
+    
     return () => clearInterval(id);
-  }, [assignment.dueAt]);
+  }, [serverDeadline]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -93,8 +118,7 @@ export function AssignmentTaking({ assignment, questions }: Props) {
   }, [answers, draftKey]);
 
   const timeUp = hasTimer && remaining === 0;
-  const dueExpired = dueRemaining !== null && dueRemaining <= 0;
-  const locked = timeUp || dueExpired;
+  const locked = timeUp;
   const answeredCount = useMemo(() => Object.keys(answers).length, [answers]);
   const [submitting, setSubmitting] = useState(false);
   const [hasSubmitted, setHasSubmitted] = useState(false);
@@ -144,22 +168,44 @@ export function AssignmentTaking({ assignment, questions }: Props) {
 
   // Tự động nộp bài khi hết giờ
   useEffect(() => {
-    if ((timeUp || dueExpired) && !hasAutoSubmitted.current && !submitting && studentName) {
+    if (timeUp && !hasAutoSubmitted.current && !submitting && studentName) {
       hasAutoSubmitted.current = true;
       handleSubmit(true);
     }
-  }, [timeUp, dueExpired, submitting, studentName, handleSubmit]);
+  }, [timeUp, submitting, studentName, handleSubmit]);
 
-  // Cập nhật trạng thái session khi rời trang
+  // Cập nhật trạng thái session khi rời trang hoặc chuyển tab
   useEffect(() => {
     if (!sessionId || !studentName) return;
 
+    let hasExited = false;
+
+    // Phát hiện chuyển tab (trang bị ẩn)
+    const handleVisibilityChange = () => {
+      if (document.hidden && !hasSubmitted && !hasExited) {
+        // Học sinh chuyển sang tab khác
+        fetch("/api/student-sessions", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, status: "exited" }),
+        }).catch(err => console.error("Failed to update session on tab switch:", err));
+        hasExited = true;
+      } else if (!document.hidden && hasExited && !hasSubmitted) {
+        // Học sinh quay lại tab
+        fetch("/api/student-sessions", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, status: "active" }),
+        }).catch(err => console.error("Failed to update session on return:", err));
+        hasExited = false;
+      }
+    };
+
+    // Phát hiện đóng tab/trình duyệt
     const handleBeforeUnload = () => {
-      // Không cập nhật nếu đã nộp bài
       if (hasSubmitted) return;
       
       // Cập nhật trạng thái thành "exited" khi đóng tab/thoát
-      // Dùng fetch synchronous với keepalive
       fetch("/api/student-sessions", {
         method: "PUT",
         keepalive: true,
@@ -168,12 +214,26 @@ export function AssignmentTaking({ assignment, questions }: Props) {
       }).catch(err => console.error("Failed to update session on exit:", err));
     };
 
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+    
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
   }, [sessionId, studentName, hasSubmitted]);
 
   const setChoice = (questionId: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [questionId]: value }));
+    
+    // Cập nhật last_activity_at để admin theo dõi
+    if (sessionId) {
+      fetch("/api/student-sessions/activity", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      }).catch(err => console.error("Failed to update activity:", err));
+    }
   };
 
   const scrollToQuestion = (questionId: string) => {
@@ -275,6 +335,14 @@ export function AssignmentTaking({ assignment, questions }: Props) {
           </div>
 
           <div className="space-y-4 sticky top-4 self-start">
+            {/* Đồng hồ thời gian thực Việt Nam */}
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-center shadow-sm">
+              <p className="text-xs font-medium text-blue-700 uppercase tracking-wide">Giờ Việt Nam</p>
+              <p className="text-2xl font-bold text-blue-900 mt-2 font-mono">
+                {formatVietnamTime(currentVietnamTime)}
+              </p>
+            </div>
+
             {hasTimer && (
               <div className="rounded-lg border border-slate-200 bg-white p-4 text-center shadow-sm">
                 <p className="text-xs font-medium text-slate-600 uppercase tracking-wide">Thời gian còn lại</p>

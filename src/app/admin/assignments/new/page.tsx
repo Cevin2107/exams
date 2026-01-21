@@ -57,11 +57,24 @@ export default function NewAssignmentPage() {
     const { resolvedSubject, resolvedGrade } = resolved;
 
     const formData = new FormData(e.currentTarget);
+    
+    // Convert datetime-local to Vietnam timezone (UTC+7)
+    let dueAtISO = null;
+    const dueAtInput = formData.get("dueAt") as string;
+    if (dueAtInput) {
+      const localDate = new Date(dueAtInput);
+      const vietnamOffset = 7 * 60; // UTC+7 in minutes
+      const localOffset = localDate.getTimezoneOffset(); // local offset from UTC
+      const offsetDiff = vietnamOffset + localOffset;
+      const adjustedDate = new Date(localDate.getTime() - offsetDiff * 60 * 1000);
+      dueAtISO = adjustedDate.toISOString();
+    }
+    
     const data = {
       title: formData.get("title") as string,
       subject: resolvedSubject,
       grade: resolvedGrade,
-      dueAt: formData.get("dueAt") as string,
+      dueAt: dueAtISO,
       durationMinutes: parseInt(formData.get("durationMinutes") as string) || undefined,
       totalScore: parseFloat(formData.get("totalScore") as string) || 10,
     };
@@ -245,11 +258,24 @@ export default function NewAssignmentPage() {
     setSavingAi(true);
     try {
       const formData = new FormData(e.currentTarget);
+      
+      // Convert datetime-local to Vietnam timezone (UTC+7)
+      let dueAtISO = null;
+      const dueAtInput = formData.get("dueAt") as string;
+      if (dueAtInput) {
+        const localDate = new Date(dueAtInput);
+        const vietnamOffset = 7 * 60; // UTC+7 in minutes
+        const localOffset = localDate.getTimezoneOffset(); // local offset from UTC
+        const offsetDiff = vietnamOffset + localOffset;
+        const adjustedDate = new Date(localDate.getTime() - offsetDiff * 60 * 1000);
+        dueAtISO = adjustedDate.toISOString();
+      }
+      
       const data = {
         title: formData.get("title") as string,
         subject: resolved.resolvedSubject,
         grade: resolved.resolvedGrade,
-        dueAt: formData.get("dueAt") as string,
+        dueAt: dueAtISO,
         durationMinutes: parseInt(formData.get("durationMinutes") as string) || undefined,
         totalScore: parseFloat(formData.get("totalScore") as string) || 10,
       };

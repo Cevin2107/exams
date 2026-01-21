@@ -59,6 +59,7 @@ interface StudentSession {
   status: "active" | "exited" | "submitted";
   started_at: string;
   last_activity_at: string;
+  exit_count: number;
   submissions?: {
     id: string;
     score: number;
@@ -152,16 +153,18 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       setAssignment(data.assignment);
       setQuestions(data.questions || []);
       if (data.assignment) {
-        // Convert UTC to local time for datetime-local input
+        // Convert UTC to Vietnam time (UTC+7) for datetime-local input
         let dueAtLocal = "";
         if (data.assignment.due_at) {
           const date = new Date(data.assignment.due_at);
-          // Format: YYYY-MM-DDThh:mm (local timezone)
-          const year = date.getFullYear();
-          const month = String(date.getMonth() + 1).padStart(2, '0');
-          const day = String(date.getDate()).padStart(2, '0');
-          const hours = String(date.getHours()).padStart(2, '0');
-          const minutes = String(date.getMinutes()).padStart(2, '0');
+          // Convert to Vietnam timezone
+          const vietnamTime = new Date(date.getTime() + 7 * 60 * 60 * 1000);
+          // Get local components (treating as if UTC)
+          const year = vietnamTime.getUTCFullYear();
+          const month = String(vietnamTime.getUTCMonth() + 1).padStart(2, '0');
+          const day = String(vietnamTime.getUTCDate()).padStart(2, '0');
+          const hours = String(vietnamTime.getUTCHours()).padStart(2, '0');
+          const minutes = String(vietnamTime.getUTCMinutes()).padStart(2, '0');
           dueAtLocal = `${year}-${month}-${day}T${hours}:${minutes}`;
         }
         
@@ -195,6 +198,17 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       console.error("Lỗi tải danh sách học sinh:", err);
     }
   }
+
+  // Auto-refresh danh sách học sinh mỗi 3 giây
+  useEffect(() => {
+    if (!assignmentId) return;
+    
+    const interval = setInterval(() => {
+      loadStudentSessions(assignmentId);
+    }, 3000); // 3 giây
+
+    return () => clearInterval(interval);
+  }, [assignmentId]);
 
   const toggleSessionSelect = (sessionId: string) => {
     setSelectedSessions(prev => {
@@ -350,11 +364,25 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   async function handleUpdateAssignment(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     try {
+      // Convert datetime-local input to Vietnam timezone (UTC+7)
+      let dueAtISO = null;
+      if (editForm.dueAt) {
+        // editForm.dueAt is in format "YYYY-MM-DDThh:mm" (browser local time)
+        // We need to interpret it as Vietnam time (UTC+7)
+        const localDate = new Date(editForm.dueAt);
+        // Get the time components as if they were Vietnam time
+        const vietnamOffset = 7 * 60; // UTC+7 in minutes
+        const localOffset = localDate.getTimezoneOffset(); // local offset from UTC in minutes (negative for positive timezones)
+        const offsetDiff = vietnamOffset + localOffset;
+        const adjustedDate = new Date(localDate.getTime() - offsetDiff * 60 * 1000);
+        dueAtISO = adjustedDate.toISOString();
+      }
+
       const payload = {
         title: editForm.title,
         subject: editForm.subject,
         grade: editForm.grade,
-        dueAt: editForm.dueAt ? new Date(editForm.dueAt).toISOString() : null,
+        dueAt: dueAtISO,
         durationMinutes: editForm.durationMinutes === "" ? null : Number(editForm.durationMinutes),
         totalScore: editForm.totalScore === "" ? undefined : Number(editForm.totalScore),
         isHidden: editForm.isHidden,
@@ -998,8 +1026,14 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
         <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-lg font-semibold text-slate-900">Danh sách học sinh</h3>
-              <p className="text-sm text-slate-600 mt-1">Theo dõi trạng thái và điểm số của học sinh</p>
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-semibold text-slate-900">Danh sách học sinh</h3>
+                <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
+                  <span className="inline-flex h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
+                  Real-time
+                </span>
+              </div>
+              <p className="text-sm text-slate-600 mt-1">Tự động cập nhật mỗi 3 giây</p>
             </div>
             <div className="flex gap-2">
               {studentSessions.length > 0 && (
@@ -1029,8 +1063,83 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             </div>
           </div>
 
+          {/* Thống kê nhanh */}
+          {studentSessions.length > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xl">🔵</span>
+                  <span className="text-xs font-medium text-blue-700">Đang làm</span>
+                </div>
+                <p className="text-2xl font-bold text-blue-900">
+                  {studentSessions.filter(s => {
+                    const hasSubmission = s.submissions && s.submissions.score !== null;
+                    return !hasSubmission && s.status === "active";
+                  }).length}
+                </p>
+              </div>
+              
+              <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xl">⚠️</span>
+                  <span className="text-xs font-medium text-yellow-700">Đã thoát</span>
+                </div>
+                <p className="text-2xl font-bold text-yellow-900">
+                  {studentSessions.filter(s => {
+                    const hasSubmission = s.submissions && s.submissions.score !== null;
+                    return !hasSubmission && s.status === "exited";
+                  }).length}
+                </p>
+              </div>
+              
+              <div className="rounded-lg border border-green-200 bg-green-50 p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xl">✅</span>
+                  <span className="text-xs font-medium text-green-700">Đã nộp</span>
+                </div>
+                <p className="text-2xl font-bold text-green-900">
+                  {studentSessions.filter(s => {
+                    const hasSubmission = s.submissions && s.submissions.score !== null;
+                    return hasSubmission || s.status === "submitted";
+                  }).length}
+                </p>
+              </div>
+              
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xl">👥</span>
+                  <span className="text-xs font-medium text-slate-700">Tổng cộng</span>
+                </div>
+                <p className="text-2xl font-bold text-slate-900">
+                  {studentSessions.length}
+                </p>
+              </div>
+            </div>
+          )}
+
           {studentSessions.length > 0 ? (
             <div className="overflow-x-auto">
+              <div className="mb-3 rounded-lg bg-blue-50 border border-blue-200 p-3">
+                <p className="text-sm font-medium text-blue-900 mb-1">Chú thích trạng thái:</p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs text-blue-800">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base">🔵</span>
+                    <span className="font-semibold">Đang làm:</span>
+                    <span>Học sinh đang làm bài</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base">⚠️</span>
+                    <span className="font-semibold">Đã thoát:</span>
+                    <span>Chuyển tab/đóng trình duyệt, chưa nộp</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base">✅</span>
+                    <span className="font-semibold">Đã nộp:</span>
+                    <span>Đã nộp bài thành công</span>
+                  </div>
+                </div>
+              </div>
+              
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50">
@@ -1038,21 +1147,44 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                     <th className="px-4 py-3 text-left font-semibold text-slate-700">Tên học sinh</th>
                     <th className="px-4 py-3 text-left font-semibold text-slate-700">Trạng thái</th>
                     <th className="px-4 py-3 text-left font-semibold text-slate-700">Điểm</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Số lần thoát</th>
                     <th className="px-4 py-3 text-left font-semibold text-slate-700">Thời gian bắt đầu</th>
                     <th className="px-4 py-3 text-left font-semibold text-slate-700">Cập nhật cuối</th>
                   </tr>
                 </thead>
                 <tbody>
                   {studentSessions.map((session) => {
-                    // Ưu tiên hiển thị trạng thái "Đã nộp" nếu có submission
-                    const hasSubmission = session.submissions && session.submissions.score !== null && session.submissions.score !== undefined;
-                    const displayStatus = hasSubmission ? "submitted" : session.status;
+                    // Logic trạng thái ưu tiên:
+                    // 1. Có submission (score != null) → "Đã nộp"
+                    // 2. status = "submitted" → "Đã nộp" (backup)
+                    // 3. status = "exited" và KHÔNG có submission → "Đã thoát"
+                    // 4. status = "active" → "Đang làm"
+                    
+                    const hasSubmission = session.submissions && 
+                      session.submissions.score !== null && 
+                      session.submissions.score !== undefined;
+                    
+                    let displayStatus: "active" | "exited" | "submitted";
+                    
+                    if (hasSubmission || session.status === "submitted") {
+                      displayStatus = "submitted";
+                    } else if (session.status === "exited") {
+                      displayStatus = "exited";
+                    } else {
+                      displayStatus = "active";
+                    }
                     
                     const statusDisplay = {
-                      active: { label: "Đang làm", color: "bg-blue-100 text-blue-700" },
-                      exited: { label: "Đã thoát", color: "bg-yellow-100 text-yellow-700" },
-                      submitted: { label: "Đã nộp", color: "bg-green-100 text-green-700" },
+                      active: { label: "Đang làm", color: "bg-blue-100 text-blue-700", icon: "🔵" },
+                      exited: { label: "Đã thoát", color: "bg-yellow-100 text-yellow-700", icon: "⚠️" },
+                      submitted: { label: "Đã nộp", color: "bg-green-100 text-green-700", icon: "✅" },
                     }[displayStatus];
+
+                    // Kiểm tra hoạt động gần đây (trong 2 phút)
+                    const lastActivityTime = new Date(session.last_activity_at).getTime();
+                    const now = Date.now();
+                    const isRecentActivity = (now - lastActivityTime) < 2 * 60 * 1000; // 2 phút
+                    const minutesSinceActivity = Math.floor((now - lastActivityTime) / (60 * 1000));
 
                     return (
                       <tr key={session.id} className="border-b border-slate-100 hover:bg-slate-50">
@@ -1066,9 +1198,12 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                         </td>
                         <td className="px-4 py-3 font-medium text-slate-900">{session.student_name}</td>
                         <td className="px-4 py-3">
-                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusDisplay.color}`}>
-                            {statusDisplay.label}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-base">{statusDisplay.icon}</span>
+                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusDisplay.color}`}>
+                              {statusDisplay.label}
+                            </span>
+                          </div>
                         </td>
                         <td className="px-4 py-3 font-semibold">
                           {session.submissions ? (
@@ -1076,6 +1211,25 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                           ) : (
                             <span className="text-slate-400">-</span>
                           )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            {session.exit_count > 0 ? (
+                              <>
+                                <span className="text-lg">🚪</span>
+                                <span className={`font-bold ${
+                                  session.exit_count >= 3 ? 'text-red-600' : 
+                                  session.exit_count >= 1 ? 'text-amber-600' : 
+                                  'text-slate-600'
+                                }`}>
+                                  {session.exit_count}
+                                </span>
+                                <span className="text-xs text-slate-500">lần</span>
+                              </>
+                            ) : (
+                              <span className="text-slate-400 text-xs">Chưa thoát</span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-slate-600">
                           {new Date(session.started_at).toLocaleString("vi-VN", {
@@ -1085,13 +1239,33 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                             minute: "2-digit"
                           })}
                         </td>
-                        <td className="px-4 py-3 text-slate-600">
-                          {new Date(session.last_activity_at).toLocaleString("vi-VN", {
-                            day: "2-digit",
-                            month: "2-digit",
-                            hour: "2-digit",
-                            minute: "2-digit"
-                          })}
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            {isRecentActivity && displayStatus === "active" && (
+                              <span className="inline-flex h-2 w-2 rounded-full bg-green-500 animate-pulse" title="Đang hoạt động"></span>
+                            )}
+                            <div>
+                              <div className="text-slate-900 font-medium">
+                                {new Date(session.last_activity_at).toLocaleString("vi-VN", {
+                                  day: "2-digit",
+                                  month: "2-digit",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  second: "2-digit"
+                                })}
+                              </div>
+                              {displayStatus === "active" && (
+                                <div className="text-xs text-slate-500">
+                                  {minutesSinceActivity === 0 ? "Vừa xong" : `${minutesSinceActivity} phút trước`}
+                                </div>
+                              )}
+                              {displayStatus === "exited" && !hasSubmission && (
+                                <div className="text-xs text-amber-600 font-medium">
+                                  Chưa nộp bài
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1107,16 +1281,17 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                     studentSessions.reduce((acc, session) => {
                       const name = session.student_name;
                       if (!acc[name]) {
-                        acc[name] = { count: 0, submitted: 0, scores: [] };
+                        acc[name] = { count: 0, submitted: 0, scores: [], totalExits: 0 };
                       }
                       acc[name].count++;
+                      acc[name].totalExits += session.exit_count || 0;
                       // Kiểm tra xem có submissions không (dựa vào có điểm hay không)
                       if (session.submissions && session.submissions.score !== null && session.submissions.score !== undefined) {
                         acc[name].submitted++;
                         acc[name].scores.push(session.submissions.score);
                       }
                       return acc;
-                    }, {} as Record<string, { count: number; submitted: number; scores: number[] }>)
+                    }, {} as Record<string, { count: number; submitted: number; scores: number[]; totalExits: number }>)
                   ).map(([name, stats]) => {
                     const avgScore = stats.scores.length > 0
                       ? stats.scores.reduce((a, b) => a + b, 0) / stats.scores.length
@@ -1129,6 +1304,16 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                         <div className="mt-2 space-y-1 text-xs text-slate-600">
                           <p>Số lần vào: <span className="font-semibold text-slate-900">{stats.count}</span></p>
                           <p>Đã nộp: <span className="font-semibold text-slate-900">{stats.submitted}</span></p>
+                          <p className="flex items-center gap-1">
+                            <span>🚪 Tổng số lần thoát:</span>
+                            <span className={`font-semibold ${
+                              stats.totalExits >= 5 ? 'text-red-600' : 
+                              stats.totalExits >= 2 ? 'text-amber-600' : 
+                              'text-slate-900'
+                            }`}>
+                              {stats.totalExits}
+                            </span>
+                          </p>
                           {stats.scores.length > 0 && (
                             <>
                               <p>Điểm TB: <span className="font-semibold text-slate-900">{avgScore.toFixed(2)}</span></p>

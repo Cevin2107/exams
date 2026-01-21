@@ -15,6 +15,29 @@ export async function POST(req: Request) {
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     const supabase = createClient(url, serviceKey);
 
+    // Lấy thông tin assignment để tính deadline
+    const { data: assignment } = await supabase
+      .from("assignments")
+      .select("duration_minutes, due_at")
+      .eq("id", assignmentId)
+      .single();
+
+    // Tính deadline_at dựa trên thời gian bắt đầu + duration
+    const startedAt = new Date();
+    let deadlineAt = null;
+    
+    if (assignment?.duration_minutes) {
+      deadlineAt = new Date(startedAt.getTime() + assignment.duration_minutes * 60 * 1000);
+    }
+    
+    // Nếu có due_at và nó nhỏ hơn deadline tính theo duration, dùng due_at
+    if (assignment?.due_at) {
+      const dueAtDate = new Date(assignment.due_at);
+      if (!deadlineAt || dueAtDate < deadlineAt) {
+        deadlineAt = dueAtDate;
+      }
+    }
+
     // Tạo session mới
     const { data: session, error } = await supabase
       .from("student_sessions")
@@ -22,8 +45,9 @@ export async function POST(req: Request) {
         assignment_id: assignmentId,
         student_name: studentName.trim(),
         status,
-        started_at: new Date().toISOString(),
-        last_activity_at: new Date().toISOString(),
+        started_at: startedAt.toISOString(),
+        deadline_at: deadlineAt?.toISOString() || null,
+        last_activity_at: startedAt.toISOString(),
       })
       .select()
       .single();
@@ -54,13 +78,27 @@ export async function PUT(req: Request) {
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     const supabase = createClient(url, serviceKey);
 
+    // Lấy trạng thái hiện tại để kiểm tra
+    const { data: currentSession } = await supabase
+      .from("student_sessions")
+      .select("status, exit_count")
+      .eq("id", sessionId)
+      .single();
+
+    const updateData: any = {
+      status,
+      last_activity_at: new Date().toISOString(),
+    };
+
+    // Nếu chuyển từ active → exited, tăng exit_count
+    if (currentSession && currentSession.status === "active" && status === "exited") {
+      updateData.exit_count = (currentSession.exit_count || 0) + 1;
+    }
+
     // Cập nhật session
     const { error } = await supabase
       .from("student_sessions")
-      .update({
-        status,
-        last_activity_at: new Date().toISOString(),
-      })
+      .update(updateData)
       .eq("id", sessionId);
 
     if (error) {

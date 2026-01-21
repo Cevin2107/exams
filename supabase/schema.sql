@@ -48,7 +48,9 @@ create table if not exists student_sessions (
   student_name text not null,
   status text not null default 'active' check (status in ('active','exited','submitted')),
   started_at timestamptz not null default now(),
+  deadline_at timestamptz,  -- Thời điểm deadline tính theo started_at + duration
   last_activity_at timestamptz not null default now(),
+  exit_count integer not null default 0,  -- Số lần thoát tab/trình duyệt
   submission_id uuid references submissions(id) on delete set null,
   created_at timestamptz not null default now()
 );
