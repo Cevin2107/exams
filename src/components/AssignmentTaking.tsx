@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import clsx from "clsx";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -124,7 +124,7 @@ export function AssignmentTaking({ assignment, questions }: Props) {
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [startTime] = useState(Date.now());
 
-  const handleSubmit = async (isAutoSubmit = false) => {
+  const handleSubmit = useCallback(async (isAutoSubmit = false) => {
     if (submitting || (locked && !isAutoSubmit)) return;
     if (!studentName || !sessionId) {
       console.error("Missing studentName or sessionId:", { studentName, sessionId });
@@ -164,7 +164,7 @@ export function AssignmentTaking({ assignment, questions }: Props) {
       console.error("Lỗi kết nối:", error);
       setSubmitting(false);
     }
-  };
+  }, [assignment.id, studentName, sessionId, answers, startTime, draftKey]);
 
   // Tự động nộp bài khi hết giờ
   useEffect(() => {

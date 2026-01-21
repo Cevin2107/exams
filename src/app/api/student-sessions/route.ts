@@ -85,7 +85,11 @@ export async function PUT(req: Request) {
       .eq("id", sessionId)
       .single();
 
-    const updateData: any = {
+    const updateData: {
+      status: string;
+      last_activity_at: string;
+      exit_count?: number;
+    } = {
       status,
       last_activity_at: new Date().toISOString(),
     };
