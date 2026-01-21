@@ -77,10 +77,18 @@ export default function NewAssignmentPage() {
         const result = await res.json();
         router.push(`/admin/assignments/${result.id}`);
       } else {
-        console.error("Lỗi tạo bài tập");
+        const text = await res.text();
+        console.error("Lỗi tạo bài tập - Status:", res.status, "Response:", text);
+        try {
+          const errorData = JSON.parse(text);
+          alert(`Lỗi tạo bài tập (${res.status}): ${errorData.error || text}`);
+        } catch {
+          alert(`Lỗi tạo bài tập (${res.status}): ${text}`);
+        }
       }
     } catch (err) {
       console.error("Lỗi kết nối:", err);
+      alert(`Lỗi kết nối: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setLoading(false);
     }

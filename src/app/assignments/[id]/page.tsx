@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { AssignmentTaking } from "@/components/AssignmentTaking";
 import { fetchAssignmentById, fetchQuestions } from "@/lib/supabaseHelpers";
 
@@ -6,7 +6,10 @@ import { fetchAssignmentById, fetchQuestions } from "@/lib/supabaseHelpers";
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export default async function AssignmentPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function AssignmentPage({ params, searchParams }: { 
+  params: Promise<{ id: string }>,
+  searchParams: Promise<{ name?: string }>
+}) {
   const { id } = await params;
   const assignment = await fetchAssignmentById(id);
   if (!assignment) return notFound();

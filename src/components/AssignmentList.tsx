@@ -197,7 +197,7 @@ export function AssignmentList({ assignments }: AssignmentListProps) {
                         Lịch sử
                       </Link>
                       <Link
-                        href={`/assignments/${assignment.id}`}
+                        href={`/assignments/${assignment.id}/start`}
                         className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-800"
                       >
                         Làm lại
@@ -205,7 +205,7 @@ export function AssignmentList({ assignments }: AssignmentListProps) {
                     </>
                   ) : (
                     <Link
-                      href={overdue ? "#" : `/assignments/${assignment.id}`}
+                      href={overdue ? "#" : `/assignments/${assignment.id}/start`}
                       aria-disabled={overdue}
                       className={clsx(
                         "rounded-lg px-4 py-1.5 text-sm font-medium transition",

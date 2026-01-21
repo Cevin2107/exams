@@ -32,11 +32,24 @@ create table if not exists questions (
 create table if not exists submissions (
   id uuid primary key default gen_random_uuid(),
   assignment_id uuid not null references assignments(id) on delete cascade,
+  student_name text not null,
   student_code text,
   submitted_at timestamptz not null default now(),
   score numeric,
   status text not null default 'pending' check (status in ('pending','scored')),
   duration_seconds integer,
+  created_at timestamptz not null default now()
+);
+
+-- Bảng tracking trạng thái học sinh (đang làm, đã thoát, đã nộp)
+create table if not exists student_sessions (
+  id uuid primary key default gen_random_uuid(),
+  assignment_id uuid not null references assignments(id) on delete cascade,
+  student_name text not null,
+  status text not null default 'active' check (status in ('active','exited','submitted')),
+  started_at timestamptz not null default now(),
+  last_activity_at timestamptz not null default now(),
+  submission_id uuid references submissions(id) on delete set null,
   created_at timestamptz not null default now()
 );
 
@@ -61,6 +74,8 @@ create table if not exists admin_settings (
 create index if not exists idx_questions_assignment on questions(assignment_id);
 create index if not exists idx_submissions_assignment on submissions(assignment_id);
 create index if not exists idx_answers_submission on answers(submission_id);
+create index if not exists idx_student_sessions_assignment on student_sessions(assignment_id);
+create index if not exists idx_student_sessions_student on student_sessions(student_name);
 
 -- RLS
 alter table assignments enable row level security;
@@ -68,6 +83,7 @@ alter table questions enable row level security;
 alter table submissions enable row level security;
 alter table answers enable row level security;
 alter table admin_settings enable row level security;
+alter table student_sessions enable row level security;
 
 -- Drop existing policies if any
 drop policy if exists "Public read visible assignments" on assignments;
@@ -80,6 +96,9 @@ drop policy if exists "Public insert answers" on answers;
 drop policy if exists "Service role manage answers" on answers;
 drop policy if exists "Service role read admin settings" on admin_settings;
 drop policy if exists "Service role update admin settings" on admin_settings;
+drop policy if exists "Public insert student sessions" on student_sessions;
+drop policy if exists "Public update student sessions" on student_sessions;
+drop policy if exists "Service role manage student sessions" on student_sessions;
 
 -- Public can read visible assignments
 create policy "Public read visible assignments" on assignments
@@ -123,6 +142,14 @@ create policy "Service role read admin settings" on admin_settings
   for select using (auth.role() = 'service_role');
 create policy "Service role update admin settings" on admin_settings
   for update using (auth.role() = 'service_role') with check (true);
+
+-- Public can insert and update student sessions
+create policy "Public insert student sessions" on student_sessions
+  for insert with check (auth.role() in ('anon','authenticated'));
+create policy "Public update student sessions" on student_sessions
+  for update using (auth.role() in ('anon','authenticated')) with check (true);
+create policy "Service role manage student sessions" on student_sessions
+  for all using (auth.role() = 'service_role') with check (true);
 
 -- Storage bucket for question images
 insert into storage.buckets (id, name, public) values ('question-images', 'question-images', true)

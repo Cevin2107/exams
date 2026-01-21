@@ -4,7 +4,11 @@ import { createClient } from "@supabase/supabase-js";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { assignmentId, answers, durationSeconds } = body;
+    const { assignmentId, studentName, sessionId, answers, durationSeconds } = body;
+
+    if (!studentName) {
+      return NextResponse.json({ error: "Student name is required" }, { status: 400 });
+    }
 
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -25,6 +29,7 @@ export async function POST(req: Request) {
       .from("submissions")
       .insert({
         assignment_id: assignmentId,
+        student_name: studentName,
         submitted_at: new Date().toISOString(),
         duration_seconds: durationSeconds,
         status: "pending",
@@ -70,6 +75,28 @@ export async function POST(req: Request) {
       .from("submissions")
       .update({ score: normalizedScore, status: "scored" })
       .eq("id", submission.id);
+
+    // Cập nhật session status thành "submitted"
+    if (sessionId) {
+      console.log("Updating session to submitted:", sessionId);
+      const { data: updateData, error: updateError } = await supabase
+        .from("student_sessions")
+        .update({ 
+          status: "submitted",
+          submission_id: submission.id,
+          last_activity_at: new Date().toISOString()
+        })
+        .eq("id", sessionId)
+        .select();
+      
+      if (updateError) {
+        console.error("Error updating session:", updateError);
+      } else {
+        console.log("Session updated successfully:", updateData);
+      }
+    } else {
+      console.warn("No sessionId provided for submission");
+    }
 
     return NextResponse.json({ submissionId: submission.id, score: normalizedScore });
   } catch (err) {

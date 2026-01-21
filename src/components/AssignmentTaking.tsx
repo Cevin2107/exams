@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import clsx from "clsx";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Assignment, Question } from "@/lib/types";
 
 interface Props {
@@ -21,6 +22,9 @@ const formatClock = (seconds: number) => {
 };
 
 export function AssignmentTaking({ assignment, questions }: Props) {
+  const router = useRouter();
+  const [studentName, setStudentName] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const hasTimer = Boolean(assignment.durationMinutes);
   const initialSeconds = hasTimer ? (assignment.durationMinutes ?? 0) * 60 : 0;
   const [remaining, setRemaining] = useState(initialSeconds);
@@ -29,6 +33,24 @@ export function AssignmentTaking({ assignment, questions }: Props) {
   );
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const draftKey = useMemo(() => `assignment-draft-${assignment.id}`, [assignment.id]);
+  const hasAutoSubmitted = useRef(false);
+
+  // Kiểm tra xem học sinh đã nhập tên chưa
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    
+    const savedName = localStorage.getItem(`student-name-${assignment.id}`);
+    const savedSessionId = localStorage.getItem(`session-${assignment.id}`);
+    
+    if (!savedName || !savedSessionId) {
+      // Chưa nhập tên, chuyển đến trang start
+      router.push(`/assignments/${assignment.id}/start`);
+      return;
+    }
+    
+    setStudentName(savedName);
+    setSessionId(savedSessionId);
+  }, [assignment.id, router]);
 
   useEffect(() => {
     if (!hasTimer) return;
@@ -75,19 +97,28 @@ export function AssignmentTaking({ assignment, questions }: Props) {
   const locked = timeUp || dueExpired;
   const answeredCount = useMemo(() => Object.keys(answers).length, [answers]);
   const [submitting, setSubmitting] = useState(false);
+  const [hasSubmitted, setHasSubmitted] = useState(false);
   const [startTime] = useState(Date.now());
 
-  const handleSubmit = async () => {
-    if (submitting || locked) return;
+  const handleSubmit = async (isAutoSubmit = false) => {
+    if (submitting || (locked && !isAutoSubmit)) return;
+    if (!studentName || !sessionId) {
+      console.error("Missing studentName or sessionId:", { studentName, sessionId });
+      return;
+    }
 
     setSubmitting(true);
+    setHasSubmitted(true);
     try {
       const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
+      console.log("Submitting with sessionId:", sessionId);
       const res = await fetch("/api/submissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           assignmentId: assignment.id,
+          studentName,
+          sessionId,
           answers,
           durationSeconds,
         }),
@@ -111,6 +142,36 @@ export function AssignmentTaking({ assignment, questions }: Props) {
     }
   };
 
+  // Tự động nộp bài khi hết giờ
+  useEffect(() => {
+    if ((timeUp || dueExpired) && !hasAutoSubmitted.current && !submitting && studentName) {
+      hasAutoSubmitted.current = true;
+      handleSubmit(true);
+    }
+  }, [timeUp, dueExpired, submitting, studentName]);
+
+  // Cập nhật trạng thái session khi rời trang
+  useEffect(() => {
+    if (!sessionId || !studentName) return;
+
+    const handleBeforeUnload = () => {
+      // Không cập nhật nếu đã nộp bài
+      if (hasSubmitted) return;
+      
+      // Cập nhật trạng thái thành "exited" khi đóng tab/thoát
+      // Dùng fetch synchronous với keepalive
+      fetch("/api/student-sessions", {
+        method: "PUT",
+        keepalive: true,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, status: "exited" }),
+      }).catch(err => console.error("Failed to update session on exit:", err));
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [sessionId, studentName, hasSubmitted]);
+
   const setChoice = (questionId: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [questionId]: value }));
   };
@@ -129,6 +190,9 @@ export function AssignmentTaking({ assignment, questions }: Props) {
           <div className="flex-1">
             <p className="text-sm font-medium text-slate-600">{assignment.subject} · {assignment.grade}</p>
             <h1 className="text-2xl font-bold text-slate-900 mt-1">{assignment.title}</h1>
+            {studentName && (
+              <p className="text-sm text-slate-600 mt-1">Học sinh: <span className="font-semibold">{studentName}</span></p>
+            )}
             {assignment.durationMinutes && (
               <p className="text-sm text-slate-600 mt-1">Thời gian làm bài: {assignment.durationMinutes} phút</p>
             )}
@@ -204,7 +268,7 @@ export function AssignmentTaking({ assignment, questions }: Props) {
               )}
               type="button"
               disabled={locked || submitting}
-              onClick={handleSubmit}
+              onClick={() => handleSubmit(false)}
             >
               {submitting ? "Đang nộp..." : locked ? "Đã khóa bài" : "Nộp bài"}
             </button>

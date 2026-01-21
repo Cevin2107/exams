@@ -53,9 +53,25 @@ interface AiQuestion {
   correct_answer: "A" | "B" | "C" | "D";
 }
 
+interface StudentSession {
+  id: string;
+  student_name: string;
+  status: "active" | "exited" | "submitted";
+  started_at: string;
+  last_activity_at: string;
+  submissions?: {
+    id: string;
+    score: number;
+    submitted_at: string;
+    status: string;
+  } | null;
+}
+
 export default function AssignmentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
+  const [studentSessions, setStudentSessions] = useState<StudentSession[]>([]);
+  const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set());
   const [showAddForm, setShowAddForm] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [showAiForm, setShowAiForm] = useState(false);
@@ -160,12 +176,61 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
         });
       }
       loadAnalytics(id);
+      loadStudentSessions(id);
     } catch (err) {
       console.error("Lỗi tải dữ liệu:", err);
     } finally {
       setLoading(false);
     }
   }
+
+  async function loadStudentSessions(id: string) {
+    try {
+      const res = await fetch(`/api/student-sessions?assignmentId=${id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setStudentSessions(data.sessions || []);
+      }
+    } catch (err) {
+      console.error("Lỗi tải danh sách học sinh:", err);
+    }
+  }
+
+  const toggleSessionSelect = (sessionId: string) => {
+    setSelectedSessions(prev => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) {
+        next.delete(sessionId);
+      } else {
+        next.add(sessionId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllSessions = () => {
+    if (selectedSessions.size === studentSessions.length) {
+      setSelectedSessions(new Set());
+    } else {
+      setSelectedSessions(new Set(studentSessions.map(s => s.id)));
+    }
+  };
+
+  const deleteSelectedSessions = async () => {
+    if (selectedSessions.size === 0) return;
+    if (!confirm(`Xóa ${selectedSessions.size} học sinh đã chọn?`)) return;
+
+    try {
+      for (const sessionId of selectedSessions) {
+        await fetch(`/api/student-sessions/${sessionId}`, { method: "DELETE" });
+      }
+      setSelectedSessions(new Set());
+      await loadStudentSessions(assignmentId);
+    } catch (err) {
+      console.error("Lỗi xóa sessions:", err);
+      alert("Có lỗi khi xóa");
+    }
+  };
 
   async function loadAnalytics(id: string) {
     try {
@@ -926,6 +991,159 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             </>
           ) : (
             <p className="text-sm text-slate-500">Chưa có thống kê.</p>
+          )}
+        </div>
+
+        {/* Danh sách học sinh */}
+        <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900">Danh sách học sinh</h3>
+              <p className="text-sm text-slate-600 mt-1">Theo dõi trạng thái và điểm số của học sinh</p>
+            </div>
+            <div className="flex gap-2">
+              {studentSessions.length > 0 && (
+                <>
+                  <button
+                    onClick={toggleSelectAllSessions}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:border-slate-400"
+                  >
+                    {selectedSessions.size === studentSessions.length ? "Bỏ chọn tất cả" : "Chọn tất cả"}
+                  </button>
+                  {selectedSessions.size > 0 && (
+                    <button
+                      onClick={deleteSelectedSessions}
+                      className="rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 shadow-sm hover:border-red-400"
+                    >
+                      Xóa đã chọn ({selectedSessions.size})
+                    </button>
+                  )}
+                </>
+              )}
+              <button
+                onClick={() => loadStudentSessions(assignmentId)}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:border-slate-400"
+              >
+                🔄 Làm mới
+              </button>
+            </div>
+          </div>
+
+          {studentSessions.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50">
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700 w-10"></th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Tên học sinh</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Trạng thái</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Điểm</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Thời gian bắt đầu</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Cập nhật cuối</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {studentSessions.map((session) => {
+                    // Ưu tiên hiển thị trạng thái "Đã nộp" nếu có submission
+                    const hasSubmission = session.submissions && session.submissions.score !== null && session.submissions.score !== undefined;
+                    const displayStatus = hasSubmission ? "submitted" : session.status;
+                    
+                    const statusDisplay = {
+                      active: { label: "Đang làm", color: "bg-blue-100 text-blue-700" },
+                      exited: { label: "Đã thoát", color: "bg-yellow-100 text-yellow-700" },
+                      submitted: { label: "Đã nộp", color: "bg-green-100 text-green-700" },
+                    }[displayStatus];
+
+                    return (
+                      <tr key={session.id} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="px-4 py-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedSessions.has(session.id)}
+                            onChange={() => toggleSessionSelect(session.id)}
+                            className="h-4 w-4 rounded border-slate-300"
+                          />
+                        </td>
+                        <td className="px-4 py-3 font-medium text-slate-900">{session.student_name}</td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusDisplay.color}`}>
+                            {statusDisplay.label}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-semibold">
+                          {session.submissions ? (
+                            <span className="text-slate-900">{session.submissions.score.toFixed(2)}</span>
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {new Date(session.started_at).toLocaleString("vi-VN", {
+                            day: "2-digit",
+                            month: "2-digit",
+                            hour: "2-digit",
+                            minute: "2-digit"
+                          })}
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {new Date(session.last_activity_at).toLocaleString("vi-VN", {
+                            day: "2-digit",
+                            month: "2-digit",
+                            hour: "2-digit",
+                            minute: "2-digit"
+                          })}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {/* Thống kê theo học sinh */}
+              <div className="mt-6 space-y-3">
+                <h4 className="text-sm font-semibold text-slate-900">Thống kê theo học sinh</h4>
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                  {Object.entries(
+                    studentSessions.reduce((acc, session) => {
+                      const name = session.student_name;
+                      if (!acc[name]) {
+                        acc[name] = { count: 0, submitted: 0, scores: [] };
+                      }
+                      acc[name].count++;
+                      // Kiểm tra xem có submissions không (dựa vào có điểm hay không)
+                      if (session.submissions && session.submissions.score !== null && session.submissions.score !== undefined) {
+                        acc[name].submitted++;
+                        acc[name].scores.push(session.submissions.score);
+                      }
+                      return acc;
+                    }, {} as Record<string, { count: number; submitted: number; scores: number[] }>)
+                  ).map(([name, stats]) => {
+                    const avgScore = stats.scores.length > 0
+                      ? stats.scores.reduce((a, b) => a + b, 0) / stats.scores.length
+                      : 0;
+                    const maxScore = stats.scores.length > 0 ? Math.max(...stats.scores) : 0;
+
+                    return (
+                      <div key={name} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <p className="font-semibold text-slate-900">{name}</p>
+                        <div className="mt-2 space-y-1 text-xs text-slate-600">
+                          <p>Số lần vào: <span className="font-semibold text-slate-900">{stats.count}</span></p>
+                          <p>Đã nộp: <span className="font-semibold text-slate-900">{stats.submitted}</span></p>
+                          {stats.scores.length > 0 && (
+                            <>
+                              <p>Điểm TB: <span className="font-semibold text-slate-900">{avgScore.toFixed(2)}</span></p>
+                              <p>Điểm cao nhất: <span className="font-semibold text-slate-900">{maxScore.toFixed(2)}</span></p>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500 text-center py-8">Chưa có học sinh nào vào làm bài</p>
           )}
         </div>
 
