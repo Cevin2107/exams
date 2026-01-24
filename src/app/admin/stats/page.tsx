@@ -97,7 +97,7 @@ export default function AdminStatsPage() {
     setDetailData(null);
   };
 
-  const viewDetail = async (type: 'submission' | 'session', id: string, studentName: string, assignmentTitle: string) => {
+  const viewDetail = async (type: 'submission' | 'session', id: string, studentName: string, _assignmentTitle: string) => {
     setSelectedItem({ type, id });
     setLoadingDetail(true);
     try {
@@ -110,7 +110,7 @@ export default function AdminStatsPage() {
         
         // Tìm thông tin từ students list
         const student = students.find(s => s.studentName === studentName);
-        let detailWithMeta: DetailData = { questions: data.questions };
+        const detailWithMeta: DetailData = { questions: data.questions };
         
         if (type === 'submission') {
           const submission = student?.submissions.find(s => s.id === id);
