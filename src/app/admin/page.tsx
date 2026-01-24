@@ -29,6 +29,12 @@ export default function AdminLoginPage() {
               placeholder="Mật khẩu admin"
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-inner focus:border-slate-400 focus:outline-none"
               required
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.currentTarget.form?.requestSubmit();
+                }
+              }}
             />
             {error && <p className="text-sm text-red-600">{error}</p>}
             <button

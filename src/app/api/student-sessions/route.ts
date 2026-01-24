@@ -139,8 +139,8 @@ export async function GET(req: Request) {
         .from("student_sessions")
         .select("*")
         .eq("assignment_id", assignmentId)
-        .eq("student_name", studentName.trim())
-        .eq("status", "active")
+        .ilike("student_name", studentName.trim())  // Case-insensitive search
+        .in("status", ["active", "exited"])  // Tìm cả active và exited
         .is("submission_id", null)
         .order("started_at", { ascending: false })
         .limit(1);

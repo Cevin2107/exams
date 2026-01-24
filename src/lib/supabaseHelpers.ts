@@ -531,7 +531,7 @@ export async function fetchAllStudentsStats() {
 
   if (submissionsError) throw submissionsError;
 
-  // Lấy tất cả sessions đang làm dở (active, chưa có submission)
+  // Lấy tất cả sessions đang làm dở (active hoặc exited, chưa có submission)
   const { data: activeSessions, error: sessionsError } = await supabase
     .from("student_sessions")
     .select(`
@@ -547,7 +547,7 @@ export async function fetchAllStudentsStats() {
         grade
       )
     `)
-    .eq("status", "active")
+    .in("status", ["active", "exited"])
     .is("submission_id", null)
     .order("started_at", { ascending: false });
 

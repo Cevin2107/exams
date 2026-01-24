@@ -76,7 +76,16 @@ export async function GET(
       };
     });
 
+    const assignmentData = submission.assignments as { title?: string; subject?: string; grade?: string } | undefined;
+
     return NextResponse.json({
+      submission: {
+        studentName: submission.student_name,
+        assignmentTitle: assignmentData?.title || "N/A",
+        score: submission.score || 0,
+        durationSeconds: submission.duration_seconds || 0,
+        submittedAt: submission.submitted_at,
+      },
       questions: questionDetails,
     });
   } catch (error) {

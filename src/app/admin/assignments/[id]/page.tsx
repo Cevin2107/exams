@@ -340,15 +340,15 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             totalQuestions: data.questions.length,
             answeredCount,
             correctCount: 0, // Chưa chấm
-            questions: data.questions.map((q: { id: string; order: number; content: string; type: string; imageUrl?: string; choices?: string[]; answerKey?: string; points: number }) => ({
-              questionId: q.id,
+            questions: data.questions.map((q: QuestionDetail) => ({
+              questionId: q.questionId,
               order: q.order,
               content: q.content,
               type: q.type,
               imageUrl: q.imageUrl,
               choices: q.choices,
               correctAnswer: q.answerKey,
-              studentAnswer: draftAnswers[q.id],
+              studentAnswer: draftAnswers[q.questionId],  // Sử dụng questionId thay vì q.id
               isCorrect: undefined, // Chưa chấm
               points: q.points
             }))

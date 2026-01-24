@@ -606,85 +606,112 @@ export default function AdminStatsPage() {
                 </div>
 
                 {/* Danh sách câu hỏi */}
-                <div className="p-4 space-y-4">
+                <div className="p-6 space-y-3">
                   {detailData.questions.map((q: QuestionDetail) => {
+                    const hasAnswer = q.studentAnswer !== undefined && q.studentAnswer !== null && q.studentAnswer !== "";
+                    const isSubmitted = selectedItem.type === 'submission';
+                    
+                    // Xác định màu border và background
+                    let borderColor = "border-slate-200";
+                    let bgColor = "bg-white";
+                    
+                    if (isSubmitted && hasAnswer) {
+                      if (q.isCorrect) {
+                        borderColor = "border-green-300";
+                        bgColor = "bg-green-50";
+                      } else {
+                        borderColor = "border-red-300";
+                        bgColor = "bg-red-50";
+                      }
+                    } else if (hasAnswer) {
+                      borderColor = "border-blue-300";
+                      bgColor = "bg-blue-50";
+                    }
+
                     return (
-                      <div
-                        key={q.questionId}
-                        className={`rounded-lg border-2 p-4 ${
-                          q.isCorrect === true
-                            ? 'border-green-500 bg-green-50'
-                            : q.isCorrect === false
-                            ? 'border-red-500 bg-red-50'
-                            : q.studentAnswer
-                            ? 'border-blue-500 bg-blue-50'
-                            : 'border-slate-200 bg-white'
-                        }`}
-                      >
+                      <div key={q.questionId} className={`rounded-lg border p-4 ${borderColor} ${bgColor}`}>
                         <div className="flex items-start justify-between mb-2">
-                          <div className="flex-1">
-                            <p className="text-xs font-semibold uppercase text-slate-600">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center rounded-md bg-slate-200 px-2 py-1 text-xs font-bold text-slate-700">
                               Câu {q.order}
-                              {q.isCorrect === true && <span className="ml-2 text-green-600">✓ Đúng</span>}
-                              {q.isCorrect === false && <span className="ml-2 text-red-600">✗ Sai</span>}
-                              {q.isCorrect === null && q.studentAnswer && selectedItem?.type === 'session' && <span className="ml-2 text-blue-600">● Đã trả lời</span>}
-                              {!q.studentAnswer && <span className="ml-2 text-slate-400">○ Chưa làm</span>}
-                            </p>
-                            {q.content && (
-                              <p className="text-sm font-medium text-slate-900 mt-1">{q.content}</p>
+                            </span>
+                            <span className="text-xs text-slate-600">
+                              {q.type === "mcq" ? "Trắc nghiệm" : "Tự luận"} · {q.points.toFixed(2)} điểm
+                            </span>
+                          </div>
+                          <div>
+                            {isSubmitted && hasAnswer && (
+                              <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                q.isCorrect ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                              }`}>
+                                {q.isCorrect ? "✓ Đúng" : "✗ Sai"}
+                              </span>
+                            )}
+                            {!isSubmitted && hasAnswer && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
+                                ✓ Đã trả lời
+                              </span>
                             )}
                           </div>
-                          <span className="text-xs font-semibold bg-slate-200 text-slate-700 px-2.5 py-1 rounded-md">
-                            {Number(q.points).toFixed(1)} đ
-                          </span>
                         </div>
 
                         {q.imageUrl && (
-                          <div className="my-2">
-                            <img src={q.imageUrl} alt="Câu hỏi" className="max-h-48 rounded border" />
+                          <div className="mb-3 rounded-lg border border-slate-200 p-2">
+                            <img src={q.imageUrl} alt="Câu hỏi" className="max-h-48 w-auto rounded" />
                           </div>
                         )}
 
-                        {q.type === 'mcq' && (
-                          <div className="grid gap-2 mt-3">
-                            {/* Hiển thị các lựa chọn - nếu có choices thì dùng, không thì tạo 4 options trống */}
-                            {(q.choices && q.choices.length > 0 
-                              ? q.choices 
-                              : ['', '', '', ''] // 4 lựa chọn trống cho câu chỉ có ảnh
-                            ).map((choice: string, idx: number) => {
-                              const optionLabel = String.fromCharCode(65 + idx);
-                              const isStudentAnswer = q.studentAnswer === optionLabel;
-                              const isCorrectAnswer = q.answerKey === optionLabel;
+                        {q.content && (
+                          <p className="text-base font-medium text-slate-900 mb-3">{q.content}</p>
+                        )}
+
+                        {q.type === "mcq" && (
+                          <div className="space-y-2">
+                            {(q.choices && q.choices.length > 0 ? q.choices : ['', '', '', '']).map((choice, idx) => {
+                              const choiceLetter = String.fromCharCode(65 + idx);
                               
+                              // Chuẩn hóa để so sánh - xử lý cả null/undefined
+                              const studentChoice = q.studentAnswer ? String(q.studentAnswer).trim().toUpperCase() : "";
+                              const correctChoiceRaw = q.answerKey ? String(q.answerKey).trim().toUpperCase() : "";
+                              const correctChoice = correctChoiceRaw || (q.isCorrect ? studentChoice : "");
+
+                              const isCorrectAnswer = correctChoice && choiceLetter === correctChoice;
+                              const isStudentChoice = studentChoice && choiceLetter === studentChoice;
+
+                              // LUÔN ưu tiên đáp án đúng = xanh
+                              const borderClass = isCorrectAnswer ? "border-emerald-600" : isStudentChoice ? "border-red-600" : "border-slate-200";
+                              const bgClass = isCorrectAnswer ? "bg-emerald-50" : isStudentChoice ? "bg-red-50" : "bg-white";
+                              const fontClass = (isCorrectAnswer || isStudentChoice) ? "font-medium" : "";
+
                               return (
-                                <div
-                                  key={idx}
-                                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-                                    isStudentAnswer && isCorrectAnswer
-                                      ? 'border-green-500 bg-green-100 font-semibold'
-                                      : isStudentAnswer && !isCorrectAnswer
-                                      ? 'border-red-500 bg-red-100 font-semibold'
-                                      : isCorrectAnswer
-                                      ? 'border-green-400 bg-green-50'
-                                      : 'border-slate-300 bg-white'
-                                  }`}
+                                <div 
+                                  key={`${q.questionId}-${choiceLetter}`} 
+                                  className={`rounded-lg border px-3 py-2 text-sm ${borderClass} ${bgClass} ${fontClass}`}
                                 >
-                                  <span className="font-bold">{optionLabel}.</span>
-                                  <span className="flex-1">{choice || '(Xem đáp án trong ảnh)'}</span>
-                                  {isStudentAnswer && <span className="ml-auto text-blue-600 font-semibold">← Học sinh chọn</span>}
-                                  {isCorrectAnswer && !isStudentAnswer && <span className="ml-auto text-green-600 font-semibold">← Đáp án đúng</span>}
+                                  <span className="font-semibold">{choiceLetter}.</span> {choice && <span>{choice}</span>}
+                                  {isCorrectAnswer && (
+                                    <span className="ml-2 text-emerald-700 font-semibold">← Đáp án đúng</span>
+                                  )}
+                                  {isStudentChoice && !isCorrectAnswer && (
+                                    <span className="ml-2 text-red-700 font-semibold">← Học sinh chọn</span>
+                                  )}
                                 </div>
                               );
                             })}
                           </div>
                         )}
 
-                        {selectedItem.type === 'submission' && q.pointsAwarded !== undefined && (
-                          <div className="mt-2 text-sm">
-                            <p className="text-slate-600">
-                              Điểm đạt được: <span className="font-semibold">{q.pointsAwarded.toFixed(2)}</span>
-                            </p>
+                        {q.type === "essay" && (
+                          <div className="mt-3">
+                            <p className="text-xs font-semibold text-slate-700 mb-1">Câu trả lời của học sinh:</p>
+                            <div className="rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800">
+                              {hasAnswer ? q.studentAnswer : <em className="text-slate-400">Chưa trả lời</em>}
+                            </div>
                           </div>
+                        )}
+
+                        {!hasAnswer && (
+                          <p className="text-sm text-slate-400 italic mt-2">Chưa trả lời câu này</p>
                         )}
                       </div>
                     );

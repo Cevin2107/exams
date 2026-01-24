@@ -93,6 +93,20 @@ export default function StartAssignmentPage({ params }: { params: Promise<{ id: 
 
         const data = await res.json();
         sessionId = data.sessionId;
+      } else {
+        // Resume session - cập nhật status về active
+        const res = await fetch("/api/student-sessions", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId,
+            status: "active"
+          }),
+        });
+
+        if (!res.ok) {
+          throw new Error("Không thể tiếp tục bài tập");
+        }
       }
       
       if (!sessionId) {

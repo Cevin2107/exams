@@ -309,14 +309,14 @@ export function AssignmentTaking({ assignment, questions }: Props) {
     if (saveProgress && sessionId) {
       // Giữ nguyên session và answers trong localStorage để tiếp tục sau
       console.log("Saving progress for session:", sessionId);
-      // Đảm bảo session vẫn ở trạng thái active
+      // Cập nhật status thành exited
       try {
         await fetch("/api/student-sessions", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId, status: "active" }),
+          body: JSON.stringify({ sessionId, status: "exited" }),
         });
-        console.log("Session kept as active");
+        console.log("Session marked as exited");
       } catch (err) {
         console.error("Failed to update session:", err);
       }
