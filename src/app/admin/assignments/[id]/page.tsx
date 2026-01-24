@@ -60,12 +60,38 @@ interface StudentSession {
   started_at: string;
   last_activity_at: string;
   exit_count: number;
+  draft_answers?: Record<string, string>;
   submissions?: {
     id: string;
     score: number;
     submitted_at: string;
     status: string;
   } | null;
+}
+
+interface QuestionDetail {
+  questionId: string;
+  order: number;
+  content: string;
+  type: string;
+  imageUrl?: string;
+  choices?: string[];
+  correctAnswer?: string;
+  studentAnswer?: string;
+  isCorrect?: boolean;
+  points: number;
+}
+
+interface StudentDetail {
+  sessionId: string;
+  submissionId?: string;
+  studentName: string;
+  status: "active" | "exited" | "submitted";
+  score?: number;
+  totalQuestions: number;
+  answeredCount: number;
+  correctCount: number;
+  questions: QuestionDetail[];
 }
 
 export default function AssignmentDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -84,6 +110,9 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
+  const [showStudentDetail, setShowStudentDetail] = useState(false);
+  const [studentDetail, setStudentDetail] = useState<StudentDetail | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
   
   // AI generation states
   const [aiFiles, setAiFiles] = useState<File[]>([]);
@@ -258,6 +287,79 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       console.error("Lỗi tải thống kê:", err);
     } finally {
       setAnalyticsLoading(false);
+    }
+  }
+
+  async function loadStudentDetail(session: StudentSession) {
+    try {
+      setLoadingDetail(true);
+      setShowStudentDetail(true);
+
+      // Nếu đã nộp bài, load từ submission
+      if (session.submissions && session.submissions.id) {
+        const res = await fetch(`/api/admin/submissions/${session.submissions.id}/detail`);
+        if (res.ok) {
+          const data = await res.json();
+          const detail: StudentDetail = {
+            sessionId: session.id,
+            submissionId: session.submissions.id,
+            studentName: session.student_name,
+            status: "submitted",
+            score: session.submissions.score,
+            totalQuestions: data.questions.length,
+            answeredCount: data.questions.filter((q: any) => q.studentAnswer).length,
+            correctCount: data.questions.filter((q: any) => q.isCorrect).length,
+            questions: data.questions.map((q: any) => ({
+              questionId: q.questionId,
+              order: q.order,
+              content: q.content,
+              type: q.type,
+              imageUrl: q.imageUrl,
+              choices: q.choices,
+              correctAnswer: q.correctAnswer,
+              studentAnswer: q.studentAnswer,
+              isCorrect: q.isCorrect,
+              points: q.points
+            }))
+          };
+          setStudentDetail(detail);
+        }
+      } else {
+        // Chưa nộp bài, load từ session với draft_answers
+        const res = await fetch(`/api/admin/sessions/${session.id}/detail`);
+        if (res.ok) {
+          const data = await res.json();
+          const draftAnswers = data.draft_answers || {};
+          const answeredCount = Object.keys(draftAnswers).filter(k => draftAnswers[k]).length;
+          
+          const detail: StudentDetail = {
+            sessionId: session.id,
+            studentName: session.student_name,
+            status: session.status,
+            totalQuestions: data.questions.length,
+            answeredCount,
+            correctCount: 0, // Chưa chấm
+            questions: data.questions.map((q: any) => ({
+              questionId: q.id,
+              order: q.order,
+              content: q.content,
+              type: q.type,
+              imageUrl: q.imageUrl,
+              choices: q.choices,
+              correctAnswer: q.answerKey,
+              studentAnswer: draftAnswers[q.id],
+              isCorrect: undefined, // Chưa chấm
+              points: q.points
+            }))
+          };
+          setStudentDetail(detail);
+        }
+      }
+    } catch (err) {
+      console.error("Lỗi tải chi tiết học sinh:", err);
+      alert("Không thể tải chi tiết");
+    } finally {
+      setLoadingDetail(false);
     }
   }
 
@@ -1186,6 +1288,11 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                     const isRecentActivity = (now - lastActivityTime) < 2 * 60 * 1000; // 2 phút
                     const minutesSinceActivity = Math.floor((now - lastActivityTime) / (60 * 1000));
 
+                    // Tính progress nếu có draft_answers
+                    const draftAnswers = session.draft_answers || {};
+                    const answeredCount = Object.keys(draftAnswers).filter(k => draftAnswers[k]).length;
+                    const progressText = answeredCount > 0 ? `Làm đến câu ${answeredCount}/${questions.length}` : "";
+
                     return (
                       <tr key={session.id} className="border-b border-slate-100 hover:bg-slate-50">
                         <td className="px-4 py-3">
@@ -1196,7 +1303,14 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                             className="h-4 w-4 rounded border-slate-300"
                           />
                         </td>
-                        <td className="px-4 py-3 font-medium text-slate-900">{session.student_name}</td>
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => loadStudentDetail(session)}
+                            className="font-medium text-blue-600 hover:text-blue-800 hover:underline text-left"
+                          >
+                            {session.student_name}
+                          </button>
+                        </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
                             <span className="text-base">{statusDisplay.icon}</span>
@@ -1254,7 +1368,12 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                                   second: "2-digit"
                                 })}
                               </div>
-                              {displayStatus === "active" && (
+                              {progressText && displayStatus !== "submitted" && (
+                                <div className="text-xs text-blue-600 font-semibold">
+                                  📝 {progressText}
+                                </div>
+                              )}
+                              {displayStatus === "active" && !progressText && (
                                 <div className="text-xs text-slate-500">
                                   {minutesSinceActivity === 0 ? "Vừa xong" : `${minutesSinceActivity} phút trước`}
                                 </div>
@@ -1818,6 +1937,180 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
           )}
         </div>
       </div>
+
+      {/* Modal chi tiết học sinh */}
+      {showStudentDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowStudentDetail(false)}>
+          <div className="relative max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">
+                  Chi tiết bài làm - {studentDetail?.studentName}
+                </h3>
+                {studentDetail && (
+                  <div className="mt-1 flex items-center gap-3 text-sm">
+                    <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                      studentDetail.status === "submitted" ? "bg-green-100 text-green-700" :
+                      studentDetail.status === "exited" ? "bg-yellow-100 text-yellow-700" :
+                      "bg-blue-100 text-blue-700"
+                    }`}>
+                      {studentDetail.status === "submitted" ? "✅ Đã nộp" :
+                       studentDetail.status === "exited" ? "⚠️ Đã thoát" :
+                       "🔵 Đang làm"}
+                    </span>
+                    {studentDetail.score !== undefined && (
+                      <span className="font-semibold text-slate-900">
+                        Điểm: {studentDetail.score.toFixed(2)}
+                      </span>
+                    )}
+                    <span className="text-slate-600">
+                      Đã làm: {studentDetail.answeredCount}/{studentDetail.totalQuestions} câu
+                    </span>
+                    {studentDetail.status === "submitted" && (
+                      <span className="text-slate-600">
+                        Đúng: {studentDetail.correctCount}/{studentDetail.totalQuestions} câu
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setShowStudentDetail(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {loadingDetail ? (
+              <div className="flex items-center justify-center p-12">
+                <div className="text-center">
+                  <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-blue-600"></div>
+                  <p className="mt-3 text-sm text-slate-600">Đang tải chi tiết...</p>
+                </div>
+              </div>
+            ) : studentDetail ? (
+              <div className="p-6">
+                <div className="space-y-3">
+                  {studentDetail.questions.map((q) => {
+                    const hasAnswer = q.studentAnswer !== undefined && q.studentAnswer !== null && q.studentAnswer !== "";
+                    const isSubmitted = studentDetail.status === "submitted";
+                    
+                    // Xác định màu border và background
+                    let borderColor = "border-slate-200";
+                    let bgColor = "bg-white";
+                    
+                    if (isSubmitted && hasAnswer) {
+                      if (q.isCorrect) {
+                        borderColor = "border-green-300 bg-green-50";
+                        bgColor = "bg-green-50";
+                      } else {
+                        borderColor = "border-red-300 bg-red-50";
+                        bgColor = "bg-red-50";
+                      }
+                    } else if (hasAnswer) {
+                      borderColor = "border-blue-300";
+                      bgColor = "bg-blue-50";
+                    }
+
+                    return (
+                      <div key={q.questionId} className={`rounded-lg border p-4 ${borderColor} ${bgColor}`}>
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center rounded-md bg-slate-200 px-2 py-1 text-xs font-bold text-slate-700">
+                              Câu {q.order}
+                            </span>
+                            <span className="text-xs text-slate-600">
+                              {q.type === "mcq" ? "Trắc nghiệm" : "Tự luận"} · {q.points.toFixed(2)} điểm
+                            </span>
+                          </div>
+                          {isSubmitted && hasAnswer && (
+                            <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                              q.isCorrect ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                            }`}>
+                              {q.isCorrect ? "✓ Đúng" : "✗ Sai"}
+                            </span>
+                          )}
+                          {!isSubmitted && hasAnswer && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
+                              ✓ Đã trả lời
+                            </span>
+                          )}
+                        </div>
+
+                        {q.imageUrl && (
+                          <div className="mb-3 rounded-lg border border-slate-200 p-2">
+                            <img src={q.imageUrl} alt="Câu hỏi" className="max-h-48 w-auto rounded" />
+                          </div>
+                        )}
+
+                        {q.content && (
+                          <p className="text-base font-medium text-slate-900 mb-3">{q.content}</p>
+                        )}
+
+                        {q.type === "mcq" && q.choices && (
+                          <div className="space-y-2">
+                            {q.choices.map((choice, idx) => {
+                              const choiceLetter = String.fromCharCode(65 + idx);
+                              const isStudentAnswer = q.studentAnswer === choiceLetter;
+                              const isCorrectAnswer = q.correctAnswer === choiceLetter;
+                              
+                              let choiceStyle = "border-slate-200 bg-white";
+                              if (isSubmitted) {
+                                if (isCorrectAnswer) {
+                                  choiceStyle = "border-green-400 bg-green-100";
+                                } else if (isStudentAnswer) {
+                                  choiceStyle = "border-red-400 bg-red-100";
+                                }
+                              } else if (isStudentAnswer) {
+                                choiceStyle = "border-blue-400 bg-blue-100";
+                              }
+
+                              return (
+                                <div key={idx} className={`rounded border p-2 text-sm ${choiceStyle}`}>
+                                  <span className="font-semibold">{choiceLetter}.</span> {choice}
+                                  {isSubmitted && isCorrectAnswer && (
+                                    <span className="ml-2 text-green-600 font-bold">✓ Đáp án đúng</span>
+                                  )}
+                                  {isSubmitted && isStudentAnswer && !isCorrectAnswer && (
+                                    <span className="ml-2 text-red-600 font-bold">✗ Học sinh chọn</span>
+                                  )}
+                                  {!isSubmitted && isStudentAnswer && (
+                                    <span className="ml-2 text-blue-600 font-bold">← Đã chọn</span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {q.type === "essay" && (
+                          <div className="mt-3">
+                            <p className="text-xs font-semibold text-slate-700 mb-1">Câu trả lời của học sinh:</p>
+                            <div className="rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800">
+                              {hasAnswer ? q.studentAnswer : <em className="text-slate-400">Chưa trả lời</em>}
+                            </div>
+                          </div>
+                        )}
+
+                        {!hasAnswer && (
+                          <p className="text-sm text-slate-400 italic mt-2">Chưa trả lời câu này</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="p-12 text-center">
+                <p className="text-slate-600">Không có dữ liệu</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   );
 }

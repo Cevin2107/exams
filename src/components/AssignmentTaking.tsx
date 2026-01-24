@@ -45,6 +45,13 @@ export function AssignmentTaking({ assignment, questions }: Props) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const draftKey = useMemo(() => `assignment-draft-${assignment.id}`, [assignment.id]);
   const hasAutoSubmitted = useRef(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  // Mount flag để tránh hydration mismatch
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // Kiểm tra xem học sinh đã nhập tên chưa và lấy deadline từ server
   useEffect(() => {
@@ -53,8 +60,11 @@ export function AssignmentTaking({ assignment, questions }: Props) {
     const savedName = localStorage.getItem(`student-name-${assignment.id}`);
     const savedSessionId = localStorage.getItem(`session-${assignment.id}`);
     
+    console.log("Checking session - savedName:", savedName, "savedSessionId:", savedSessionId);
+    
     if (!savedName || !savedSessionId) {
       // Chưa nhập tên, chuyển đến trang start
+      console.log("No session found, redirecting to start page");
       router.push(`/assignments/${assignment.id}/start`);
       return;
     }
@@ -96,26 +106,70 @@ export function AssignmentTaking({ assignment, questions }: Props) {
   }, [serverDeadline]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const saved = localStorage.getItem(draftKey);
-      if (saved) {
-        const parsed = JSON.parse(saved) as { answers: Record<string, string> };
-        if (parsed?.answers) setAnswers(parsed.answers);
+    if (typeof window === "undefined" || !sessionId) return;
+    
+    // Load draft từ database thay vì localStorage
+    const loadDraft = async () => {
+      try {
+        console.log("Loading draft from database for session:", sessionId);
+        const res = await fetch(`/api/student-sessions/${sessionId}/draft`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.draftAnswers && Object.keys(data.draftAnswers).length > 0) {
+            console.log("Loaded answers from database:", data.draftAnswers);
+            setAnswers(data.draftAnswers);
+          } else {
+            console.log("No draft found in database");
+          }
+        }
+      } catch (err) {
+        console.warn("Không thể tải nháp từ database", err);
+        // Fallback: thử load từ localStorage
+        try {
+          const saved = localStorage.getItem(draftKey);
+          if (saved) {
+            const parsed = JSON.parse(saved) as { answers: Record<string, string> };
+            if (parsed?.answers) {
+              console.log("Loaded answers from localStorage fallback:", parsed.answers);
+              setAnswers(parsed.answers);
+            }
+          }
+        } catch (localErr) {
+          console.warn("Không thể tải nháp từ localStorage", localErr);
+        }
       }
-    } catch (err) {
-      console.warn("Không thể tải nháp", err);
-    }
-  }, [draftKey]);
+    };
+    
+    loadDraft();
+  }, [sessionId]); // Chỉ load 1 lần khi có sessionId
 
+  // Lưu draft vào database thay vì localStorage
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      localStorage.setItem(draftKey, JSON.stringify({ answers }));
-    } catch (err) {
-      console.warn("Không thể lưu nháp", err);
-    }
-  }, [answers, draftKey]);
+    if (typeof window === "undefined" || !sessionId) return;
+    
+    const saveDraft = async () => {
+      try {
+        console.log("Saving draft to database, session:", sessionId, "answers:", answers);
+        await fetch(`/api/student-sessions/${sessionId}/draft`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ draftAnswers: answers }),
+        });
+        // Backup vào localStorage
+        localStorage.setItem(draftKey, JSON.stringify({ answers }));
+      } catch (err) {
+        console.warn("Không thể lưu nháp vào database, fallback to localStorage", err);
+        try {
+          localStorage.setItem(draftKey, JSON.stringify({ answers }));
+        } catch (localErr) {
+          console.warn("Không thể lưu nháp", localErr);
+        }
+      }
+    };
+
+    const timeoutId = setTimeout(saveDraft, 500); // Debounce 500ms
+    return () => clearTimeout(timeoutId);
+  }, [answers, sessionId, draftKey]);
 
   const timeUp = hasTimer && remaining === 0;
   const locked = timeUp;
@@ -243,6 +297,49 @@ export function AssignmentTaking({ assignment, questions }: Props) {
     }
   };
 
+  const handleExitClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (answeredCount > 0) {
+      setShowExitConfirm(true);
+    } else {
+      router.push("/");
+    }
+  };
+
+  const handleExitConfirm = async (saveProgress: boolean) => {
+    if (saveProgress && sessionId) {
+      // Giữ nguyên session và answers trong localStorage để tiếp tục sau
+      console.log("Saving progress for session:", sessionId);
+      // Đảm bảo session vẫn ở trạng thái active
+      try {
+        await fetch("/api/student-sessions", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId, status: "active" }),
+        });
+        console.log("Session kept as active");
+      } catch (err) {
+        console.error("Failed to update session:", err);
+      }
+      // Xóa localStorage để buộc phải qua trang start lần sau
+      localStorage.removeItem(`session-${assignment.id}`);
+      localStorage.removeItem(`student-name-${assignment.id}`);
+      // Giữ draft để tiếp tục
+      console.log("Cleared session from localStorage, kept draft");
+    } else {
+      // Xóa session và draft
+      if (sessionId) {
+        fetch(`/api/student-sessions/${sessionId}`, { method: "DELETE" })
+          .catch(err => console.error("Failed to delete session:", err));
+      }
+      localStorage.removeItem(draftKey);
+      localStorage.removeItem(`session-${assignment.id}`);
+      localStorage.removeItem(`student-name-${assignment.id}`);
+    }
+    setShowExitConfirm(false);
+    router.push("/");
+  };
+
   return (
     <main className="min-h-screen bg-slate-50">
       <div className="mx-auto max-w-5xl space-y-6 px-4 py-8">
@@ -257,10 +354,47 @@ export function AssignmentTaking({ assignment, questions }: Props) {
               <p className="text-sm text-slate-600 mt-1">Thời gian làm bài: {assignment.durationMinutes} phút</p>
             )}
           </div>
-          <Link href="/" className="text-sm text-slate-600 hover:text-slate-900 underline-offset-4 hover:underline">
+          <button
+            onClick={handleExitClick}
+            className="text-sm text-slate-600 hover:text-slate-900 underline-offset-4 hover:underline"
+          >
             ← Quay lại
-          </Link>
+          </button>
         </div>
+
+        {/* Popup xác nhận thoát */}
+        {showExitConfirm && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+              <h3 className="text-lg font-bold text-slate-900 mb-2">
+                ⚠️ Bạn muốn thoát bài tập?
+              </h3>
+              <p className="text-sm text-slate-600 mb-4">
+                Bạn đã làm {answeredCount}/{questions.length} câu. Bạn có muốn lưu lại để làm tiếp lần sau không?
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => handleExitConfirm(true)}
+                  className="flex-1 bg-blue-600 text-white px-4 py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition"
+                >
+                  Lưu lại và thoát
+                </button>
+                <button
+                  onClick={() => handleExitConfirm(false)}
+                  className="flex-1 bg-red-600 text-white px-4 py-2.5 rounded-lg font-semibold hover:bg-red-700 transition"
+                >
+                  Xóa và thoát
+                </button>
+              </div>
+              <button
+                onClick={() => setShowExitConfirm(false)}
+                className="w-full mt-3 text-sm text-slate-600 hover:text-slate-900 py-2"
+              >
+                Tiếp tục làm bài
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="grid gap-6 md:grid-cols-[1fr,280px]">
           <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-6">
@@ -336,14 +470,16 @@ export function AssignmentTaking({ assignment, questions }: Props) {
 
           <div className="space-y-4 sticky top-4 self-start">
             {/* Đồng hồ thời gian thực Việt Nam */}
-            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-center shadow-sm">
-              <p className="text-xs font-medium text-blue-700 uppercase tracking-wide">Giờ Việt Nam</p>
-              <p className="text-2xl font-bold text-blue-900 mt-2 font-mono">
-                {formatVietnamTime(currentVietnamTime)}
-              </p>
-            </div>
+            {isMounted && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-center shadow-sm">
+                <p className="text-xs font-medium text-blue-700 uppercase tracking-wide">Giờ Việt Nam</p>
+                <p className="text-2xl font-bold text-blue-900 mt-2 font-mono">
+                  {formatVietnamTime(currentVietnamTime)}
+                </p>
+              </div>
+            )}
 
-            {hasTimer && (
+            {isMounted && hasTimer && (
               <div className="rounded-lg border border-slate-200 bg-white p-4 text-center shadow-sm">
                 <p className="text-xs font-medium text-slate-600 uppercase tracking-wide">Thời gian còn lại</p>
                 <p className={clsx(

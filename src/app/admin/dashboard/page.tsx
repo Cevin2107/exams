@@ -35,12 +35,20 @@ export default async function AdminDashboardPage() {
       <div className="mx-auto max-w-6xl space-y-6 px-4 py-8">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900">Danh sách bài tập</h2>
-          <Link
-            href="/admin/assignments/new"
-            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow"
-          >
-            + Tạo bài tập mới
-          </Link>
+          <div className="flex gap-3">
+            <Link
+              href="/admin/stats"
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+            >
+              📊 Thống kê học sinh
+            </Link>
+            <Link
+              href="/admin/assignments/new"
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow"
+            >
+              + Tạo bài tập mới
+            </Link>
+          </div>
         </div>
 
         {assignments.length === 0 ? (

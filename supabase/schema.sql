@@ -52,6 +52,7 @@ create table if not exists student_sessions (
   last_activity_at timestamptz not null default now(),
   exit_count integer not null default 0,  -- Số lần thoát tab/trình duyệt
   submission_id uuid references submissions(id) on delete set null,
+  draft_answers jsonb default '{}'::jsonb,  -- Câu trả lời đang làm dở, sync giữa các thiết bị
   created_at timestamptz not null default now()
 );
 

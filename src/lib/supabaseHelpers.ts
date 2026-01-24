@@ -307,8 +307,44 @@ export async function rebalanceQuestionPoints(assignmentId: string) {
 
 export async function deleteAssignment(assignmentId: string) {
   const supabase = getSupabaseAdmin();
+  
+  // Lấy tất cả các ảnh của questions thuộc assignment này
+  const { data: questions } = await supabase
+    .from("questions")
+    .select("image_url")
+    .eq("assignment_id", assignmentId);
+  
+  // Xóa các ảnh từ storage nếu có
+  if (questions && questions.length > 0) {
+    const imageUrls = questions
+      .map(q => q.image_url)
+      .filter(Boolean) as string[];
+    
+    if (imageUrls.length > 0) {
+      const imagePaths = imageUrls.map(url => {
+        // Extract path from full URL
+        // URL format: https://xxx.supabase.co/storage/v1/object/public/question-images/filename.jpg
+        const match = url.match(/question-images\/(.+)$/);
+        return match ? match[1] : null;
+      }).filter(Boolean) as string[];
+      
+      if (imagePaths.length > 0) {
+        console.log(`Deleting ${imagePaths.length} images from storage`);
+        await supabase.storage.from('question-images').remove(imagePaths);
+      }
+    }
+  }
+  
+  // Xóa assignment (cascade sẽ tự động xóa tất cả dữ liệu liên quan):
+  // - questions (và ảnh đã xóa ở trên)
+  // - submissions (bài nộp)
+  // - answers (câu trả lời)
+  // - student_sessions (bao gồm draft_answers)
+  console.log(`Deleting assignment ${assignmentId} and all related data`);
   const { error } = await supabase.from("assignments").delete().eq("id", assignmentId);
   if (error) throw error;
+  
+  console.log(`Successfully deleted assignment ${assignmentId}`);
   return { success: true };
 }
 
@@ -317,11 +353,19 @@ export async function deleteQuestion(questionId: string) {
 
   const { data: question, error: fetchError } = await supabase
     .from("questions")
-    .select("assignment_id")
+    .select("assignment_id, image_url")
     .eq("id", questionId)
     .single();
 
   if (fetchError || !question) throw fetchError || new Error("Question not found");
+
+  // Xóa ảnh từ storage nếu có
+  if (question.image_url) {
+    const match = question.image_url.match(/question-images\/(.+)$/);
+    if (match) {
+      await supabase.storage.from('question-images').remove([match[1]]);
+    }
+  }
 
   const { error: deleteError } = await supabase.from("questions").delete().eq("id", questionId);
   if (deleteError) throw deleteError;
@@ -350,6 +394,22 @@ export async function updateQuestion(questionId: string, data: {
   imageUrl?: string | null;
 }) {
   const supabase = getSupabaseAdmin();
+
+  // Nếu cập nhật imageUrl mới, xóa ảnh cũ
+  if (data.imageUrl !== undefined) {
+    const { data: oldQuestion } = await supabase
+      .from("questions")
+      .select("image_url")
+      .eq("id", questionId)
+      .single();
+    
+    if (oldQuestion?.image_url && oldQuestion.image_url !== data.imageUrl) {
+      const match = oldQuestion.image_url.match(/question-images\/(.+)$/);
+      if (match) {
+        await supabase.storage.from('question-images').remove([match[1]]);
+      }
+    }
+  }
 
   const updateBody: Record<string, string | string[] | null> = {};
   if (data.type !== undefined) updateBody.type = data.type;
@@ -445,4 +505,203 @@ export async function fetchAllAssignmentsAdmin() {
 
   if (error) throw error;
   return data || [];
+}
+
+// Thống kê tổng quát của tất cả học sinh
+export async function fetchAllStudentsStats() {
+  const supabase = getSupabaseAdmin();
+  
+  // Lấy tất cả submissions với thông tin assignment
+  const { data: submissions, error: submissionsError } = await supabase
+    .from("submissions")
+    .select(`
+      id,
+      student_name,
+      score,
+      submitted_at,
+      duration_seconds,
+      assignment_id,
+      assignments (
+        title,
+        subject,
+        grade
+      )
+    `)
+    .order("submitted_at", { ascending: false });
+
+  if (submissionsError) throw submissionsError;
+
+  // Lấy tất cả sessions đang làm dở (active, chưa có submission)
+  const { data: activeSessions, error: sessionsError } = await supabase
+    .from("student_sessions")
+    .select(`
+      id,
+      student_name,
+      assignment_id,
+      started_at,
+      draft_answers,
+      assignments (
+        id,
+        title,
+        subject,
+        grade
+      )
+    `)
+    .eq("status", "active")
+    .is("submission_id", null)
+    .order("started_at", { ascending: false });
+
+  if (sessionsError) throw sessionsError;
+
+  // Group theo student_name
+  const studentMap = new Map<string, {
+    studentName: string;
+    totalSubmissions: number;
+    inProgressCount: number;
+    submissions: Array<{
+      id: string;
+      assignmentTitle: string;
+      subject: string;
+      grade: string;
+      score: number;
+      submittedAt: string;
+      durationSeconds: number;
+    }>;
+    inProgress: Array<{
+      sessionId: string;
+      assignmentId: string;
+      assignmentTitle: string;
+      subject: string;
+      grade: string;
+      startedAt: string;
+      questionsAnswered: number;
+      draftAnswers: Record<string, string>;
+    }>;
+  }>();
+
+  // Thêm submissions
+  (submissions || []).forEach((sub: any) => {
+    const name = sub.student_name;
+    if (!studentMap.has(name)) {
+      studentMap.set(name, {
+        studentName: name,
+        totalSubmissions: 0,
+        inProgressCount: 0,
+        submissions: [],
+        inProgress: [],
+      });
+    }
+    
+    const student = studentMap.get(name)!;
+    student.totalSubmissions++;
+    student.submissions.push({
+      id: sub.id,
+      assignmentTitle: sub.assignments?.title || "N/A",
+      subject: sub.assignments?.subject || "N/A",
+      grade: sub.assignments?.grade || "N/A",
+      score: sub.score || 0,
+      submittedAt: sub.submitted_at,
+      durationSeconds: sub.duration_seconds || 0,
+    });
+  });
+
+  // Thêm sessions đang làm dở
+  (activeSessions || []).forEach((session: any) => {
+    const name = session.student_name;
+    if (!studentMap.has(name)) {
+      studentMap.set(name, {
+        studentName: name,
+        totalSubmissions: 0,
+        inProgressCount: 0,
+        submissions: [],
+        inProgress: [],
+      });
+    }
+    
+    const student = studentMap.get(name)!;
+    student.inProgressCount++;
+    const draftAnswers = session.draft_answers || {};
+    student.inProgress.push({
+      sessionId: session.id,
+      assignmentId: session.assignment_id,
+      assignmentTitle: session.assignments?.title || "N/A",
+      subject: session.assignments?.subject || "N/A",
+      grade: session.assignments?.grade || "N/A",
+      startedAt: session.started_at,
+      questionsAnswered: Object.keys(draftAnswers).length,
+      draftAnswers: draftAnswers,
+    });
+  });
+
+  return Array.from(studentMap.values());
+}
+
+// Thống kê chi tiết của 1 học sinh theo tên
+export async function fetchStudentDetailStats(studentName: string) {
+  const supabase = getSupabaseAdmin();
+  
+  const { data: submissions, error } = await supabase
+    .from("submissions")
+    .select(`
+      id,
+      student_name,
+      score,
+      submitted_at,
+      duration_seconds,
+      assignment_id,
+      assignments (
+        id,
+        title,
+        subject,
+        grade,
+        total_score
+      )
+    `)
+    .eq("student_name", studentName)
+    .order("submitted_at", { ascending: false });
+
+  if (error) throw error;
+
+  // Group theo assignment để đếm số lần làm
+  const assignmentMap = new Map<string, {
+    assignmentId: string;
+    assignmentTitle: string;
+    subject: string;
+    grade: string;
+    totalScore: number;
+    attempts: Array<{
+      id: string;
+      score: number;
+      submittedAt: string;
+      durationSeconds: number;
+    }>;
+  }>();
+
+  (submissions || []).forEach((sub: any) => {
+    const aId = sub.assignment_id;
+    if (!assignmentMap.has(aId)) {
+      assignmentMap.set(aId, {
+        assignmentId: aId,
+        assignmentTitle: sub.assignments?.title || "N/A",
+        subject: sub.assignments?.subject || "N/A",
+        grade: sub.assignments?.grade || "N/A",
+        totalScore: sub.assignments?.total_score || 0,
+        attempts: [],
+      });
+    }
+    
+    const assignment = assignmentMap.get(aId)!;
+    assignment.attempts.push({
+      id: sub.id,
+      score: sub.score || 0,
+      submittedAt: sub.submitted_at,
+      durationSeconds: sub.duration_seconds || 0,
+    });
+  });
+
+  return {
+    studentName,
+    totalSubmissions: submissions?.length || 0,
+    assignments: Array.from(assignmentMap.values()),
+  };
 }

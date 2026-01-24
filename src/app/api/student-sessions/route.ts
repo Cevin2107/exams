@@ -117,11 +117,13 @@ export async function PUT(req: Request) {
   }
 }
 
-// GET: Lấy danh sách sessions của một assignment
+// GET: Lấy danh sách sessions của một assignment hoặc tìm sessions đang làm dở
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const assignmentId = searchParams.get("assignmentId");
+    const studentName = searchParams.get("studentName");
+    const findIncomplete = searchParams.get("findIncomplete") === "true";
 
     if (!assignmentId) {
       return NextResponse.json({ error: "Assignment ID is required" }, { status: 400 });
@@ -130,6 +132,29 @@ export async function GET(req: Request) {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     const supabase = createClient(url, serviceKey);
+
+    // Nếu tìm bài làm dở
+    if (findIncomplete && studentName) {
+      const { data: incompleteSessions, error } = await supabase
+        .from("student_sessions")
+        .select("*")
+        .eq("assignment_id", assignmentId)
+        .eq("student_name", studentName.trim())
+        .eq("status", "active")
+        .is("submission_id", null)
+        .order("started_at", { ascending: false })
+        .limit(1);
+
+      if (error) {
+        console.error("Session fetch error:", error);
+        return NextResponse.json({ error: "Failed to fetch sessions" }, { status: 500 });
+      }
+
+      return NextResponse.json({ 
+        hasIncomplete: incompleteSessions && incompleteSessions.length > 0,
+        session: incompleteSessions?.[0] || null
+      });
+    }
 
     // Lấy tất cả sessions và submissions
     const { data: sessions, error } = await supabase
