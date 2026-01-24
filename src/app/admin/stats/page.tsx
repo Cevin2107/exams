@@ -97,7 +97,13 @@ export default function AdminStatsPage() {
     setDetailData(null);
   };
 
-  const viewDetail = async (type: 'submission' | 'session', id: string, studentName: string, _assignmentTitle: string) => {
+  const viewDetail = async (
+    type: 'submission' | 'session',
+    id: string,
+    studentName: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _assignmentTitle: string
+  ) => {
     setSelectedItem({ type, id });
     setLoadingDetail(true);
     try {
