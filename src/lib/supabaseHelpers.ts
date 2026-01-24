@@ -580,7 +580,7 @@ export async function fetchAllStudentsStats() {
   }>();
 
   // Thêm submissions
-  (submissions || []).forEach((sub: any) => {
+  (submissions || []).forEach((sub: { id: string; student_name: string; score?: number; submitted_at: string; duration_seconds?: number; assignments?: Array<{ title?: string; subject?: string; grade?: string }> }) => {
     const name = sub.student_name;
     if (!studentMap.has(name)) {
       studentMap.set(name, {
@@ -596,9 +596,9 @@ export async function fetchAllStudentsStats() {
     student.totalSubmissions++;
     student.submissions.push({
       id: sub.id,
-      assignmentTitle: sub.assignments?.title || "N/A",
-      subject: sub.assignments?.subject || "N/A",
-      grade: sub.assignments?.grade || "N/A",
+      assignmentTitle: sub.assignments?.[0]?.title || "N/A",
+      subject: sub.assignments?.[0]?.subject || "N/A",
+      grade: sub.assignments?.[0]?.grade || "N/A",
       score: sub.score || 0,
       submittedAt: sub.submitted_at,
       durationSeconds: sub.duration_seconds || 0,
@@ -606,7 +606,7 @@ export async function fetchAllStudentsStats() {
   });
 
   // Thêm sessions đang làm dở
-  (activeSessions || []).forEach((session: any) => {
+  (activeSessions || []).forEach((session: { id: string; student_name: string; assignment_id: string; started_at: string; last_activity_at?: string; draft_answers?: Record<string, string>; assignments?: Array<{ id?: string; title?: string; subject?: string; grade?: string }> }) => {
     const name = session.student_name;
     if (!studentMap.has(name)) {
       studentMap.set(name, {
@@ -624,9 +624,9 @@ export async function fetchAllStudentsStats() {
     student.inProgress.push({
       sessionId: session.id,
       assignmentId: session.assignment_id,
-      assignmentTitle: session.assignments?.title || "N/A",
-      subject: session.assignments?.subject || "N/A",
-      grade: session.assignments?.grade || "N/A",
+      assignmentTitle: session.assignments?.[0]?.title || "N/A",
+      subject: session.assignments?.[0]?.subject || "N/A",
+      grade: session.assignments?.[0]?.grade || "N/A",
       startedAt: session.started_at,
       questionsAnswered: Object.keys(draftAnswers).length,
       draftAnswers: draftAnswers,
@@ -677,15 +677,15 @@ export async function fetchStudentDetailStats(studentName: string) {
     }>;
   }>();
 
-  (submissions || []).forEach((sub: any) => {
+  (submissions || []).forEach((sub: { id: string; assignment_id: string; score: number; submitted_at: string; duration_seconds: number; assignments?: Array<{ id?: string; title?: string; subject?: string; grade?: string; total_score?: number }> }) => {
     const aId = sub.assignment_id;
     if (!assignmentMap.has(aId)) {
       assignmentMap.set(aId, {
         assignmentId: aId,
-        assignmentTitle: sub.assignments?.title || "N/A",
-        subject: sub.assignments?.subject || "N/A",
-        grade: sub.assignments?.grade || "N/A",
-        totalScore: sub.assignments?.total_score || 0,
+        assignmentTitle: sub.assignments?.[0]?.title || "N/A",
+        subject: sub.assignments?.[0]?.subject || "N/A",
+        grade: sub.assignments?.[0]?.grade || "N/A",
+        totalScore: sub.assignments?.[0]?.total_score || 0,
         attempts: [],
       });
     }

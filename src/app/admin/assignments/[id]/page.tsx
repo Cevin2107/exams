@@ -307,9 +307,9 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             status: "submitted",
             score: session.submissions.score,
             totalQuestions: data.questions.length,
-            answeredCount: data.questions.filter((q: any) => q.studentAnswer).length,
-            correctCount: data.questions.filter((q: any) => q.isCorrect).length,
-            questions: data.questions.map((q: any) => ({
+            answeredCount: data.questions.filter((q: QuestionDetail) => q.studentAnswer).length,
+            correctCount: data.questions.filter((q: QuestionDetail) => q.isCorrect).length,
+            questions: data.questions.map((q: QuestionDetail) => ({
               questionId: q.questionId,
               order: q.order,
               content: q.content,
@@ -339,7 +339,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             totalQuestions: data.questions.length,
             answeredCount,
             correctCount: 0, // Chưa chấm
-            questions: data.questions.map((q: any) => ({
+            questions: data.questions.map((q: { id: string; order: number; content: string; type: string; imageUrl?: string; choices?: string[]; answerKey?: string; points: number }) => ({
               questionId: q.id,
               order: q.order,
               content: q.content,

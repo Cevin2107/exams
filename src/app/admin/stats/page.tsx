@@ -43,12 +43,30 @@ interface QuestionDetail {
   pointsAwarded?: number;
 }
 
+interface DetailData {
+  questions: QuestionDetail[];
+  submission?: {
+    studentName: string;
+    assignmentTitle: string;
+    score: number;
+    durationSeconds: number;
+    submittedAt: string;
+  };
+  session?: {
+    studentName: string;
+    assignmentTitle: string;
+    questionsAnswered: number;
+    totalQuestions: number;
+    startedAt: string;
+  };
+}
+
 export default function AdminStatsPage() {
   const [students, setStudents] = useState<StudentStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedStudent, setExpandedStudent] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<{ type: 'submission' | 'session', id: string } | null>(null);
-  const [detailData, setDetailData] = useState<any>(null);
+  const [detailData, setDetailData] = useState<DetailData | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
   useEffect(() => {
@@ -79,7 +97,7 @@ export default function AdminStatsPage() {
     setDetailData(null);
   };
 
-  const viewDetail = async (type: 'submission' | 'session', id: string) => {
+  const viewDetail = async (type: 'submission' | 'session', id: string, studentName: string, assignmentTitle: string) => {
     setSelectedItem({ type, id });
     setLoadingDetail(true);
     try {
@@ -89,7 +107,36 @@ export default function AdminStatsPage() {
       const res = await fetch(endpoint);
       if (res.ok) {
         const data = await res.json();
-        setDetailData(data);
+        
+        // Tìm thông tin từ students list
+        const student = students.find(s => s.studentName === studentName);
+        let detailWithMeta: DetailData = { questions: data.questions };
+        
+        if (type === 'submission') {
+          const submission = student?.submissions.find(s => s.id === id);
+          if (submission) {
+            detailWithMeta.submission = {
+              studentName: studentName,
+              assignmentTitle: submission.assignmentTitle,
+              score: submission.score,
+              durationSeconds: submission.durationSeconds,
+              submittedAt: submission.submittedAt,
+            };
+          }
+        } else {
+          const session = student?.inProgress.find(s => s.sessionId === id);
+          if (session) {
+            detailWithMeta.session = {
+              studentName: studentName,
+              assignmentTitle: session.assignmentTitle,
+              questionsAnswered: session.questionsAnswered,
+              totalQuestions: data.questions.length,
+              startedAt: session.startedAt,
+            };
+          }
+        }
+        
+        setDetailData(detailWithMeta);
       }
     } catch (err) {
       console.error("Error loading detail:", err);
@@ -199,7 +246,7 @@ export default function AdminStatsPage() {
                                     className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm cursor-pointer hover:bg-amber-100 transition"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      viewDetail('session', session.sessionId);
+                                      viewDetail('session', session.sessionId, student.studentName, session.assignmentTitle);
                                     }}
                                   >
                                     <div className="flex items-center justify-between">
@@ -238,7 +285,7 @@ export default function AdminStatsPage() {
                                     className="rounded-lg border border-slate-200 bg-white p-3 text-sm cursor-pointer hover:bg-slate-100 transition"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      viewDetail('submission', sub.id);
+                                      viewDetail('submission', sub.id, student.studentName, sub.assignmentTitle);
                                     }}
                                   >
                                     <div className="flex items-center justify-between">
@@ -287,8 +334,8 @@ export default function AdminStatsPage() {
                     </h2>
                     <p className="text-sm text-slate-600">
                       {selectedItem.type === 'submission' 
-                        ? `${detailData.submission.studentName} - ${detailData.submission.assignmentTitle}`
-                        : `${detailData.session.studentName} - ${detailData.session.assignmentTitle}`
+                        ? `${detailData.submission?.studentName || ''} - ${detailData.submission?.assignmentTitle || ''}`
+                        : `${detailData.session?.studentName || ''} - ${detailData.session?.assignmentTitle || ''}`
                       }
                     </p>
                   </div>
@@ -302,7 +349,7 @@ export default function AdminStatsPage() {
 
                 {/* Thông tin tổng quan */}
                 <div className="p-4 bg-slate-50 border-b border-slate-200">
-                  {selectedItem.type === 'submission' ? (
+                  {selectedItem.type === 'submission' && detailData.submission ? (
                     <div className="grid grid-cols-3 gap-4">
                       <div>
                         <p className="text-xs text-slate-600">Điểm</p>
@@ -321,7 +368,7 @@ export default function AdminStatsPage() {
                         </p>
                       </div>
                     </div>
-                  ) : (
+                  ) : detailData.session ? (
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <p className="text-xs text-slate-600">Đã làm</p>
@@ -336,7 +383,7 @@ export default function AdminStatsPage() {
                         </p>
                       </div>
                     </div>
-                  )}
+                  ) : null}
                 </div>
 
                 {/* Danh sách câu hỏi */}

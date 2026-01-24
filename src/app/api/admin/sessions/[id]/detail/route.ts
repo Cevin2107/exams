@@ -52,7 +52,7 @@ export async function GET(
     const draftAnswers = session.draft_answers || {};
 
     // Map câu hỏi với draft answers
-    const questionDetails = (questions || []).map((q: any) => {
+    const questionDetails = (questions || []).map((q: { id: string; order: number; type: string; content: string; choices?: string[]; answer_key?: string; points: number; image_url?: string }) => {
       const studentAnswer = draftAnswers[q.id] || null;
       const isCorrect = q.type === "mcq" && studentAnswer ? studentAnswer === q.answer_key : null;
       
@@ -70,7 +70,7 @@ export async function GET(
       };
     });
 
-    const assignmentData = session.assignments as any;
+    const assignmentData = session.assignments as { title?: string; subject?: string; grade?: string } | undefined;
 
     return NextResponse.json({
       student_name: session.student_name,

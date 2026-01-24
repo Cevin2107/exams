@@ -8,7 +8,7 @@ export default function StartAssignmentPage({ params }: { params: Promise<{ id: 
   const [studentName, setStudentName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [incompleteSession, setIncompleteSession] = useState<any>(null);
+  const [incompleteSession, setIncompleteSession] = useState<{ id: string; student_name: string; started_at: string } | null>(null);
   const [checkingIncomplete, setCheckingIncomplete] = useState(false);
   const router = useRouter();
   const [assignmentId, setAssignmentId] = useState<string>("");

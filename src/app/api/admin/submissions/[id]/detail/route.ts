@@ -59,8 +59,8 @@ export async function GET(
     if (answersError) throw answersError;
 
     // Map câu trả lời với câu hỏi
-    const questionDetails = (questions || []).map((q: any) => {
-      const answer = (answers || []).find((a: any) => a.question_id === q.id);
+    const questionDetails = (questions || []).map((q: { id: string; order: number; type: string; content: string; choices?: string[]; answer_key?: string; points: number; image_url?: string }) => {
+      const answer = (answers || []).find((a: { question_id: string; answer?: string; is_correct?: boolean; points_awarded?: number }) => a.question_id === q.id);
       return {
         questionId: q.id,
         order: q.order,
