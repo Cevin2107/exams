@@ -57,7 +57,7 @@ export async function GET(
       const isCorrect = q.type === "mcq" && studentAnswer ? studentAnswer === q.answer_key : null;
       
       return {
-        id: q.id,
+        questionId: q.id,
         order: q.order,
         type: q.type,
         content: q.content,

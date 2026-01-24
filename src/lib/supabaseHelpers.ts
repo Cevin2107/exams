@@ -521,7 +521,7 @@ export async function fetchAllStudentsStats() {
       submitted_at,
       duration_seconds,
       assignment_id,
-      assignments (
+      assignments!inner (
         title,
         subject,
         grade
@@ -540,7 +540,7 @@ export async function fetchAllStudentsStats() {
       assignment_id,
       started_at,
       draft_answers,
-      assignments (
+      assignments!inner (
         id,
         title,
         subject,
@@ -580,7 +580,16 @@ export async function fetchAllStudentsStats() {
   }>();
 
   // Thêm submissions
-  (submissions || []).forEach((sub: { id: string; student_name: string; score?: number; submitted_at: string; duration_seconds?: number; assignments?: Array<{ title?: string; subject?: string; grade?: string }> }) => {
+  type SubmissionRow = {
+    id: string;
+    student_name: string;
+    score?: number;
+    submitted_at: string;
+    duration_seconds?: number;
+    assignments: { title?: string; subject?: string; grade?: string };
+  };
+  
+  ((submissions as unknown as SubmissionRow[]) || []).forEach((sub) => {
     const name = sub.student_name;
     if (!studentMap.has(name)) {
       studentMap.set(name, {
@@ -596,9 +605,9 @@ export async function fetchAllStudentsStats() {
     student.totalSubmissions++;
     student.submissions.push({
       id: sub.id,
-      assignmentTitle: sub.assignments?.[0]?.title || "N/A",
-      subject: sub.assignments?.[0]?.subject || "N/A",
-      grade: sub.assignments?.[0]?.grade || "N/A",
+      assignmentTitle: sub.assignments?.title || "N/A",
+      subject: sub.assignments?.subject || "N/A",
+      grade: sub.assignments?.grade || "N/A",
       score: sub.score || 0,
       submittedAt: sub.submitted_at,
       durationSeconds: sub.duration_seconds || 0,
@@ -606,7 +615,16 @@ export async function fetchAllStudentsStats() {
   });
 
   // Thêm sessions đang làm dở
-  (activeSessions || []).forEach((session: { id: string; student_name: string; assignment_id: string; started_at: string; last_activity_at?: string; draft_answers?: Record<string, string>; assignments?: Array<{ id?: string; title?: string; subject?: string; grade?: string }> }) => {
+  type SessionRow = {
+    id: string;
+    student_name: string;
+    assignment_id: string;
+    started_at: string;
+    draft_answers?: Record<string, string>;
+    assignments: { id?: string; title?: string; subject?: string; grade?: string };
+  };
+  
+  ((activeSessions as unknown as SessionRow[]) || []).forEach((session) => {
     const name = session.student_name;
     if (!studentMap.has(name)) {
       studentMap.set(name, {
@@ -624,9 +642,9 @@ export async function fetchAllStudentsStats() {
     student.inProgress.push({
       sessionId: session.id,
       assignmentId: session.assignment_id,
-      assignmentTitle: session.assignments?.[0]?.title || "N/A",
-      subject: session.assignments?.[0]?.subject || "N/A",
-      grade: session.assignments?.[0]?.grade || "N/A",
+      assignmentTitle: session.assignments?.title || "N/A",
+      subject: session.assignments?.subject || "N/A",
+      grade: session.assignments?.grade || "N/A",
       startedAt: session.started_at,
       questionsAnswered: Object.keys(draftAnswers).length,
       draftAnswers: draftAnswers,
@@ -649,7 +667,7 @@ export async function fetchStudentDetailStats(studentName: string) {
       submitted_at,
       duration_seconds,
       assignment_id,
-      assignments (
+      assignments!inner (
         id,
         title,
         subject,
@@ -677,15 +695,24 @@ export async function fetchStudentDetailStats(studentName: string) {
     }>;
   }>();
 
-  (submissions || []).forEach((sub: { id: string; assignment_id: string; score: number; submitted_at: string; duration_seconds: number; assignments?: Array<{ id?: string; title?: string; subject?: string; grade?: string; total_score?: number }> }) => {
+  type StudentSubmissionRow = {
+    id: string;
+    assignment_id: string;
+    score: number;
+    submitted_at: string;
+    duration_seconds: number;
+    assignments: { id?: string; title?: string; subject?: string; grade?: string; total_score?: number };
+  };
+  
+  ((submissions as unknown as StudentSubmissionRow[]) || []).forEach((sub) => {
     const aId = sub.assignment_id;
     if (!assignmentMap.has(aId)) {
       assignmentMap.set(aId, {
         assignmentId: aId,
-        assignmentTitle: sub.assignments?.[0]?.title || "N/A",
-        subject: sub.assignments?.[0]?.subject || "N/A",
-        grade: sub.assignments?.[0]?.grade || "N/A",
-        totalScore: sub.assignments?.[0]?.total_score || 0,
+        assignmentTitle: sub.assignments?.title || "N/A",
+        subject: sub.assignments?.subject || "N/A",
+        grade: sub.assignments?.grade || "N/A",
+        totalScore: sub.assignments?.total_score || 0,
         attempts: [],
       });
     }

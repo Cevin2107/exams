@@ -67,7 +67,7 @@ export async function GET(
         type: q.type,
         content: q.content,
         choices: q.choices,
-        correctAnswer: q.answer_key,
+        answerKey: q.answer_key,
         points: q.points,
         imageUrl: q.image_url,
         studentAnswer: answer?.answer || null,
