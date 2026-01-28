@@ -140,7 +140,7 @@ export function AssignmentTaking({ assignment, questions }: Props) {
     };
     
     loadDraft();
-  }, [sessionId]); // Chỉ load 1 lần khi có sessionId
+  }, [sessionId, draftKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Lưu draft vào database thay vì localStorage
   useEffect(() => {
@@ -217,7 +217,7 @@ export function AssignmentTaking({ assignment, questions }: Props) {
       console.error("Lỗi kết nối:", error);
       setSubmitting(false);
     }
-  }, [assignment.id, studentName, sessionId, answers, startTime, draftKey]);
+  }, [assignment.id, studentName, sessionId, answers, startTime, draftKey, locked, submitting]);
 
   // Tự động nộp bài khi hết giờ
   useEffect(() => {
@@ -398,19 +398,55 @@ export function AssignmentTaking({ assignment, questions }: Props) {
         <div className="grid gap-6 md:grid-cols-[1fr,280px]">
           <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-6">
             {questions.map((q, idx) => (
-              <div key={q.id} id={`q-${q.id}`} className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div 
+                key={q.id} 
+                id={`q-${q.id}`} 
+                className={clsx(
+                  "space-y-3 rounded-lg p-4",
+                  q.type === "section" 
+                    ? "bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300" 
+                    : "bg-slate-50 border border-slate-200"
+                )}
+              >
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Câu {idx + 1}</p>
-                    {q.imageUrl && (
-                      <div className="my-3 rounded-lg border border-slate-200 p-2 bg-white">
-                        <img src={q.imageUrl} alt="Câu hỏi" className="max-h-64 w-auto rounded" />
+                    {q.type === "section" ? (
+                      // Thông báo - Hiển thị nổi bật
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5 text-blue-600">
+                          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-bold uppercase tracking-wide text-blue-700 mb-1">📢 Thông báo</p>
+                          {q.imageUrl && (
+                            <div className="my-3 rounded-lg border border-blue-200 p-2 bg-white">
+                              <img src={q.imageUrl} alt="Thông báo" className="max-h-64 w-auto rounded" />
+                            </div>
+                          )}
+                          <p className="text-base font-semibold text-slate-900 leading-relaxed">{q.content}</p>
+                        </div>
                       </div>
+                    ) : (
+                      // Câu hỏi thường
+                      <>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Câu {idx + 1}</p>
+                        {q.imageUrl && (
+                          <div className="my-3 rounded-lg border border-slate-200 p-2 bg-white">
+                            <img src={q.imageUrl} alt="Câu hỏi" className="max-h-64 w-auto rounded" />
+                          </div>
+                        )}
+                        {q.content && <p className="text-base font-medium text-slate-900 mt-2">{q.content}</p>}
+                      </>
                     )}
-                    {q.content && <p className="text-base font-medium text-slate-900 mt-2">{q.content}</p>}
                   </div>
-                  <span className="text-xs font-semibold bg-slate-200 text-slate-700 px-2.5 py-1 rounded-md">{Number(q.points ?? 0).toFixed(3)} đ</span>
+                  {q.type !== "section" && (
+                    <span className="text-xs font-semibold bg-slate-200 text-slate-700 px-2.5 py-1 rounded-md">{Number(q.points ?? 0).toFixed(3)} đ</span>
+                  )}
                 </div>
+                
+                {/* Chỉ hiển thị phần trả lời cho MCQ và Essay, không cho Section */}
                 {q.type === "mcq" ? (
                   <div className="grid gap-2 md:grid-cols-2">
                     {[0, 1, 2, 3].map((ci) => {
@@ -441,7 +477,7 @@ export function AssignmentTaking({ assignment, questions }: Props) {
                       );
                     })}
                   </div>
-                ) : (
+                ) : q.type === "essay" ? (
                   <textarea
                     className="min-h-[120px] w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900 bg-white"
                     placeholder="Nhập câu trả lời của bạn"
@@ -449,7 +485,7 @@ export function AssignmentTaking({ assignment, questions }: Props) {
                     value={answers[q.id] ?? ""}
                     onChange={(e) => setChoice(q.id, e.target.value)}
                   />
-                )}
+                ) : null}
               </div>
             ))}
             <button

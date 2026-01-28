@@ -2,6 +2,7 @@ import { checkAdminAuth, logoutAdmin } from "@/lib/adminAuth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { fetchAllAssignmentsAdmin } from "@/lib/supabaseHelpers";
+import DatabaseSizeCard from "@/components/DatabaseSizeCard";
 
 // Disable caching để luôn hiển thị dữ liệu mới nhất
 export const dynamic = 'force-dynamic';
@@ -33,6 +34,9 @@ export default async function AdminDashboardPage() {
       </div>
 
       <div className="mx-auto max-w-6xl space-y-6 px-4 py-8">
+        {/* Database size card */}
+        <DatabaseSizeCard />
+
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-900">Danh sách bài tập</h2>
           <div className="flex gap-3">

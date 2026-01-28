@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Toast from "@/components/Toast";
 
 const SUBJECT_OPTIONS = ["Toán học", "Vật lý", "Hóa học"];
 const GRADE_OPTIONS = Array.from({ length: 12 }, (_, i) => `Lớp ${i + 1}`);
@@ -22,7 +23,7 @@ interface Assignment {
 interface Question {
   id: string;
   order: number;
-  type: string;
+  type: "mcq" | "essay" | "section";
   content: string;
   choices?: string[];
   answerKey?: string;
@@ -41,7 +42,7 @@ interface Analytics {
 
 interface EditQuestionForm {
   content: string;
-  type: "mcq" | "essay";
+  type: "mcq" | "essay" | "section";
   choices: string[];
   answerKey: string;
   imageUrl: string;
@@ -51,6 +52,11 @@ interface AiQuestion {
   question: string;
   options: Record<"A" | "B" | "C" | "D", string>;
   correct_answer: "A" | "B" | "C" | "D";
+}
+
+interface ToastState {
+  message: string;
+  type: "success" | "error" | "info";
 }
 
 interface StudentSession {
@@ -100,6 +106,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const [questions, setQuestions] = useState<Question[]>([]);
   const [studentSessions, setStudentSessions] = useState<StudentSession[]>([]);
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set());
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [showAiForm, setShowAiForm] = useState(false);
@@ -126,6 +133,8 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const [aiError, setAiError] = useState("");
   const [savingAi, setSavingAi] = useState(false);
   const [selectedAiQuestionIndices, setSelectedAiQuestionIndices] = useState<Set<number>>(new Set());
+  const [draggedQuestionId, setDraggedQuestionId] = useState<string | null>(null);
+  const [showAddSectionForm, setShowAddSectionForm] = useState(false);
   const [editForm, setEditForm] = useState({
     title: "",
     subject: "",
@@ -498,10 +507,12 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       });
 
       if (!res.ok) throw new Error("Cập nhật thất bại");
+      setToast({ message: "Cập nhật bài tập thành công", type: "success" });
       await loadData(assignmentId);
       setShowEditForm(false);
     } catch (err) {
       console.error("Lỗi cập nhật bài tập:", err);
+      setToast({ message: "Không thể cập nhật bài tập", type: "error" });
     }
   }
 
@@ -516,9 +527,11 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
         body: JSON.stringify({ dueAt: next.toISOString() }),
       });
       if (!res.ok) throw new Error("Gia hạn thất bại");
+      setToast({ message: "Gia hạn thành công", type: "success" });
       await loadData(assignmentId);
     } catch (err) {
       console.error("Lỗi gia hạn:", err);
+      setToast({ message: "Không thể gia hạn", type: "error" });
     }
   }
 
@@ -530,9 +543,11 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     try {
       const res = await fetch(`/api/admin/assignments/${assignmentId}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Xóa thất bại");
-      router.push("/admin/dashboard");
+      setToast({ message: "Xóa bài tập thành công", type: "success" });
+      setTimeout(() => router.push("/admin/dashboard"), 1000);
     } catch (err) {
       console.error("Lỗi xóa bài tập:", err);
+      setToast({ message: "Không thể xóa bài tập", type: "error" });
       setDeleting(false);
     }
   }
@@ -545,7 +560,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     setEditingQuestionId(q.id);
     setEditQuestionForm({
       content: q.content,
-      type: q.type as "mcq" | "essay",
+      type: q.type as "mcq" | "essay" | "section",
       choices: q.choices || ["", "", "", ""],
       answerKey: q.answerKey || "A",
       imageUrl: q.imageUrl || "",
@@ -557,7 +572,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     if (!editingQuestionId) return;
     try {
       const payload: {
-        type: "mcq" | "essay";
+        type: "mcq" | "essay" | "section";
         content: string;
         choices?: string[];
         answerKey?: string | null;
@@ -577,9 +592,11 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       });
       if (!res.ok) throw new Error("Cập nhật câu hỏi thất bại");
       setEditingQuestionId(null);
+      setToast({ message: "Cập nhật câu hỏi thành công", type: "success" });
       await loadData(assignmentId);
     } catch (err) {
       console.error("Lỗi cập nhật câu hỏi:", err);
+      setToast({ message: "Không thể cập nhật câu hỏi", type: "error" });
     }
   }
 
@@ -587,10 +604,16 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     if (!confirm("Xóa câu hỏi này?")) return;
     try {
       const res = await fetch(`/api/admin/questions/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Xóa thất bại");
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Xóa thất bại");
+      }
+      setToast({ message: "Xóa câu hỏi thành công", type: "success" });
       await loadData(assignmentId);
     } catch (err) {
       console.error("Lỗi xóa câu hỏi:", err);
+      const message = err instanceof Error ? err.message : "Không thể xóa câu hỏi";
+      setToast({ message: `Lỗi: ${message}. Vui lòng chạy migration cleanup trong Supabase!`, type: "error" });
     }
   }
 
@@ -626,11 +649,103 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
         )
       );
       setSelectedQuestionIds(new Set());
+      setToast({ message: `Đã xóa ${selectedQuestionIds.size} câu hỏi`, type: "success" });
       await loadData(assignmentId);
     } catch (err) {
       console.error("Lỗi xóa câu hỏi:", err);
+      setToast({ message: "Không thể xóa câu hỏi", type: "error" });
     }
   };
+
+  // Drag and drop handlers
+  const handleDragStart = (e: React.DragEvent, questionId: string) => {
+    setDraggedQuestionId(questionId);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetQuestionId: string) => {
+    e.preventDefault();
+    
+    if (!draggedQuestionId || draggedQuestionId === targetQuestionId) {
+      setDraggedQuestionId(null);
+      return;
+    }
+
+    const draggedIndex = questions.findIndex(q => q.id === draggedQuestionId);
+    const targetIndex = questions.findIndex(q => q.id === targetQuestionId);
+    
+    if (draggedIndex === -1 || targetIndex === -1) {
+      setDraggedQuestionId(null);
+      return;
+    }
+
+    // Reorder questions locally
+    const newQuestions = [...questions];
+    const [draggedQuestion] = newQuestions.splice(draggedIndex, 1);
+    newQuestions.splice(targetIndex, 0, draggedQuestion);
+
+    // Update order property
+    const updatedQuestions = newQuestions.map((q, idx) => ({ ...q, order: idx + 1 }));
+    setQuestions(updatedQuestions);
+    setDraggedQuestionId(null);
+
+    // Update server
+    try {
+      await Promise.all(
+        updatedQuestions.map(q =>
+          fetch(`/api/admin/questions/${q.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ order: q.order }),
+          })
+        )
+      );
+    } catch (err) {
+      console.error("Lỗi cập nhật thứ tự:", err);
+      // Reload to get correct order from server
+      await loadData(assignmentId);
+    }
+  };
+
+  // Add section handler
+  async function handleAddSection(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const content = formData.get("content") as string;
+
+    if (!content.trim()) {
+      alert("Vui lòng nhập nội dung");
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/admin/questions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assignmentId,
+          type: "section",
+          content: content.trim(),
+          points: 0,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Thêm thông báo thất bại");
+      
+      setShowAddSectionForm(false);
+      setToast({ message: "Thêm thông báo thành công", type: "success" });
+      await loadData(assignmentId);
+      (e.target as HTMLFormElement).reset();
+    } catch (err) {
+      console.error("Lỗi thêm thông báo:", err);
+      setToast({ message: "Không thể thêm thông báo", type: "error" });
+    }
+  }
 
   // AI generation functions
   const addAiFiles = (incoming: File[]) => {
@@ -1043,6 +1158,12 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow"
             >
               {showAiForm ? "Đóng AI" : "🤖 Tạo bằng AI"}
+            </button>
+            <button
+              onClick={() => setShowAddSectionForm(!showAddSectionForm)}
+              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow"
+            >
+              {showAddSectionForm ? "Hủy" : "📌 Thêm thông báo"}
             </button>
             <button
               onClick={() => setShowAddForm(!showAddForm)}
@@ -1770,14 +1891,114 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
           </form>
         )}
 
+        {showAddSectionForm && (
+          <form onSubmit={handleAddSection} className="space-y-4 rounded-xl border-2 border-amber-300 bg-amber-50 p-6 shadow-sm">
+            <div>
+              <label className="block text-sm font-semibold text-amber-900">📌 Nội dung thông báo / mục</label>
+              <textarea
+                name="content"
+                rows={3}
+                required
+                className="mt-2 w-full rounded-lg border border-amber-200 px-3 py-2 text-sm focus:border-amber-400 focus:outline-none"
+                placeholder="Nhập nội dung thông báo, ghi chú hoặc mục..."
+              />
+            </div>
+            <p className="text-xs text-amber-700">Thông báo sẽ hiển thị nổi bật trong bài tập và không tính điểm.</p>
+            <button
+              type="submit"
+              className="w-full rounded-lg bg-amber-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow"
+            >
+              Thêm thông báo
+            </button>
+          </form>
+        )}
+
         <div className="space-y-3">
           {questions.length === 0 ? (
             <div className="rounded-xl border border-dashed border-slate-200 bg-white p-8 text-center">
               <p className="text-slate-600">Chưa có câu hỏi nào. Thêm câu hỏi đầu tiên!</p>
             </div>
           ) : (
-            questions.map((q, idx) => (
-              <div key={q.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            questions.map((q, idx) => {
+              // Render section/announcement differently
+              if (q.type === "section") {
+                return (
+                  <div
+                    key={q.id}
+                    draggable="true"
+                    onDragStart={(e) => handleDragStart(e, q.id)}
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, q.id)}
+                    className={`rounded-xl border-2 border-amber-400 bg-gradient-to-r from-amber-50 to-yellow-50 p-4 shadow-md ${draggedQuestionId === q.id ? "opacity-50" : ""}`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-start gap-3 flex-1">
+                        <div className="mt-1 text-amber-600 text-xl">📌</div>
+                        <div className="flex-1">
+                          <p className="text-xs font-bold uppercase tracking-wide text-amber-700">Thông báo</p>
+                          {q.content && <p className="mt-2 text-base font-medium text-slate-900">{q.content}</p>}
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end gap-2 text-xs">
+                        <button
+                          className="rounded border border-amber-300 bg-white px-3 py-1 font-semibold text-amber-700 hover:border-amber-500"
+                          onClick={() => startEditQuestion(q)}
+                          type="button"
+                        >
+                          Sửa
+                        </button>
+                        <button
+                          className="rounded border border-red-200 px-3 py-1 font-semibold text-red-600 hover:border-red-400"
+                          onClick={() => handleDeleteQuestion(q.id)}
+                          type="button"
+                        >
+                          Xóa
+                        </button>
+                      </div>
+                    </div>
+                    {editingQuestionId === q.id && (
+                      <form onSubmit={submitEditQuestion} className="mt-3 space-y-3 rounded-lg border border-amber-300 bg-white p-3">
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700">Nội dung thông báo</label>
+                          <textarea
+                            name="content"
+                            defaultValue={q.content || ""}
+                            rows={3}
+                            required
+                            className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="submit"
+                            className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700"
+                          >
+                            Lưu
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingQuestionId(null)}
+                            className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-300"
+                          >
+                            Hủy
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+                );
+              }
+
+              // Render normal question
+              return (
+                <div
+                  key={q.id}
+                  draggable="true"
+                  onDragStart={(e) => handleDragStart(e, q.id)}
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => handleDrop(e, q.id)}
+                  className={`rounded-xl border border-slate-200 bg-white p-4 shadow-sm ${draggedQuestionId === q.id ? "opacity-50" : ""}`}
+                >
                 <div className="flex items-start justify-between">
                   <div className="flex items-start gap-3 flex-1">
                     <input
@@ -1835,10 +2056,11 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                         <select
                           className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
                           value={editQuestionForm.type}
-                          onChange={(e) => setEditQuestionForm((p) => ({ ...p, type: e.target.value as "mcq" | "essay" }))}
+                          onChange={(e) => setEditQuestionForm((p) => ({ ...p, type: e.target.value as "mcq" | "essay" | "section" }))}
                         >
                           <option value="mcq">Trắc nghiệm</option>
                           <option value="essay">Tự luận</option>
+                          <option value="section">Thông báo</option>
                         </select>
                       </div>
                       <div>
@@ -1907,7 +2129,8 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                   </form>
                 )}
               </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
@@ -2086,6 +2309,14 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             )}
           </div>
         </div>
+      )}
+
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
       )}
     </main>
   );

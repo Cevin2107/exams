@@ -187,11 +187,12 @@ export async function createAssignment(assignment: {
 
 export async function createQuestion(question: {
   assignmentId: string;
-  type: "mcq" | "essay";
+  type: "mcq" | "essay" | "section";
   content: string;
   choices?: string[];
   answerKey?: string;
   imageUrl?: string;
+  points?: number;
 }) {
   const supabase = getSupabaseAdmin();
   const { data: assignment, error: assignmentError } = await supabase
@@ -214,7 +215,11 @@ export async function createQuestion(question: {
 
   const currentCount = existingQuestions?.length ?? 0;
   const totalQuestions = currentCount + 1;
-  const perQuestionPoints = Number(assignment.total_score || 0) / totalQuestions;
+  
+  // If section type, use points=0; otherwise calculate from total_score
+  const perQuestionPoints = question.type === "section" 
+    ? 0 
+    : Number(assignment.total_score || 0) / totalQuestions;
 
   const { data: inserted, error: insertError } = await supabase
     .from("questions")
@@ -225,7 +230,7 @@ export async function createQuestion(question: {
       content: question.content,
       choices: question.choices,
       answer_key: question.answerKey,
-      points: perQuestionPoints,
+      points: question.points !== undefined ? question.points : perQuestionPoints,
       image_url: question.imageUrl,
     })
     .select()
@@ -233,16 +238,18 @@ export async function createQuestion(question: {
 
   if (insertError) throw insertError;
 
-  if (currentCount > 0) {
+  // Only rebalance if not a section
+  if (currentCount > 0 && question.type !== "section") {
     const { error: rebalanceError } = await supabase
       .from("questions")
       .update({ points: perQuestionPoints })
-      .eq("assignment_id", question.assignmentId);
+      .eq("assignment_id", question.assignmentId)
+      .neq("type", "section"); // Don't rebalance sections
 
     if (rebalanceError) throw rebalanceError;
   }
 
-  return { ...inserted, points: perQuestionPoints };
+  return { ...inserted, points: question.points !== undefined ? question.points : perQuestionPoints };
 }
 
 export async function updateAssignment(data: {
@@ -287,20 +294,25 @@ export async function rebalanceQuestionPoints(assignmentId: string) {
 
   const [{ data: assignment, error: assignmentError }, { data: questions, error: questionError }] = await Promise.all([
     supabase.from("assignments").select("total_score").eq("id", assignmentId).single(),
-    supabase.from("questions").select("id").eq("assignment_id", assignmentId),
+    supabase.from("questions").select("id, type").eq("assignment_id", assignmentId),
   ]);
 
   if (assignmentError) throw assignmentError;
   if (questionError) throw questionError;
 
-  const count = questions?.length ?? 0;
+  // Only count non-section questions
+  const actualQuestions = questions?.filter(q => q.type !== "section") ?? [];
+  const count = actualQuestions.length;
   if (!assignment || count === 0) return;
 
   const perQuestionPoints = Number(assignment.total_score || 0) / count;
+  
+  // Update only non-section questions
   const { error: updateError } = await supabase
     .from("questions")
     .update({ points: perQuestionPoints })
-    .eq("assignment_id", assignmentId);
+    .eq("assignment_id", assignmentId)
+    .neq("type", "section");
 
   if (updateError) throw updateError;
 }
@@ -357,7 +369,13 @@ export async function deleteQuestion(questionId: string) {
     .eq("id", questionId)
     .single();
 
-  if (fetchError || !question) throw fetchError || new Error("Question not found");
+  // If question doesn't exist, consider it already deleted
+  if (fetchError?.code === 'PGRST116' || !question) {
+    console.log(`Question ${questionId} not found, considering it deleted`);
+    return;
+  }
+
+  if (fetchError) throw fetchError;
 
   // Xóa ảnh từ storage nếu có
   if (question.image_url) {
@@ -379,19 +397,24 @@ export async function deleteQuestion(questionId: string) {
   if (remainingError) throw remainingError;
 
   if (remaining && remaining.length > 0) {
-    const updates = remaining.map((q, idx) => ({ id: q.id, order: idx + 1 }));
-    const { error: reorderError } = await supabase.from("questions").upsert(updates);
-    if (reorderError) throw reorderError;
+    // Reorder: chỉ update order field, không dùng upsert vì sẽ tạo record mới
+    for (let idx = 0; idx < remaining.length; idx++) {
+      await supabase
+        .from("questions")
+        .update({ order: idx + 1 })
+        .eq("id", remaining[idx].id);
+    }
     await rebalanceQuestionPoints(question.assignment_id);
   }
 }
 
 export async function updateQuestion(questionId: string, data: {
-  type?: "mcq" | "essay";
+  type?: "mcq" | "essay" | "section";
   content?: string;
   choices?: string[];
   answerKey?: string | null;
   imageUrl?: string | null;
+  order?: number;
 }) {
   const supabase = getSupabaseAdmin();
 
@@ -411,12 +434,13 @@ export async function updateQuestion(questionId: string, data: {
     }
   }
 
-  const updateBody: Record<string, string | string[] | null> = {};
+  const updateBody: Record<string, string | string[] | number | null> = {};
   if (data.type !== undefined) updateBody.type = data.type;
   if (data.content !== undefined) updateBody.content = data.content;
   if (data.choices !== undefined) updateBody.choices = data.choices;
   if (data.answerKey !== undefined) updateBody.answer_key = data.answerKey;
   if (data.imageUrl !== undefined) updateBody.image_url = data.imageUrl;
+  if (data.order !== undefined) updateBody.order = data.order;
 
   const { data: question, error } = await supabase
     .from("questions")
@@ -424,6 +448,12 @@ export async function updateQuestion(questionId: string, data: {
     .eq("id", questionId)
     .select("assignment_id")
     .single();
+
+  // If question doesn't exist, return null gracefully
+  if (error?.code === 'PGRST116') {
+    console.log(`Question ${questionId} not found for update`);
+    return null;
+  }
 
   if (error) throw error;
 

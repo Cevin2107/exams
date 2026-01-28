@@ -20,7 +20,7 @@ create table if not exists questions (
   id uuid primary key default gen_random_uuid(),
   assignment_id uuid not null references assignments(id) on delete cascade,
   "order" integer not null,
-  type text not null check (type in ('mcq','essay')),
+  type text not null check (type in ('mcq','essay','section')),
   content text not null,
   choices jsonb,
   answer_key text,

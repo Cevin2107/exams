@@ -20,6 +20,7 @@ export async function PATCH(
       choices: body.choices,
       answerKey: body.answerKey,
       imageUrl: body.imageUrl,
+      order: body.order,
     });
     return NextResponse.json(updated);
   } catch (error) {
@@ -41,8 +42,17 @@ export async function DELETE(
     const { id } = await params;
     await deleteQuestion(id);
     return NextResponse.json({ ok: true });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Error deleting question:", error);
-    return NextResponse.json({ error: "Failed to delete question" }, { status: 500 });
+    const errorMessage = error instanceof Error ? error.message : "Failed to delete question";
+    const isDbConstraint = (error as { code?: string })?.code === "23502" || errorMessage.includes("assignment_id");
+    
+    if (isDbConstraint) {
+      return NextResponse.json({ 
+        error: "Database có dữ liệu lỗi. Vui lòng chạy cleanup migration!" 
+      }, { status: 500 });
+    }
+    
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

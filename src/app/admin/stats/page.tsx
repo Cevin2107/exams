@@ -72,6 +72,9 @@ export default function AdminStatsPage() {
   const [selectedSubmissions, setSelectedSubmissions] = useState<Set<string>>(new Set());
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [regradingMode, setRegradingMode] = useState(false);
+  const [regradeAnswers, setRegradeAnswers] = useState<Map<string, { isCorrect: boolean; pointsAwarded: number }>>(new Map());
+  const [regrading, setRegrading] = useState(false);
 
   useEffect(() => {
     async function loadStats() {
@@ -200,6 +203,8 @@ export default function AdminStatsPage() {
     setSelectedItem(null);
     setDetailData(null);
     setAutoRefresh(false);
+    setRegradingMode(false);
+    setRegradeAnswers(new Map());
   };
 
   const toggleSubmissionSelect = (id: string) => {
@@ -292,6 +297,97 @@ export default function AdminStatsPage() {
       setDeleting(false);
     }
   };
+
+  const startRegrading = () => {
+    if (!detailData || !selectedItem || selectedItem.type !== 'submission') return;
+    
+    // Initialize regrade answers with current values
+    const initialAnswers = new Map<string, { isCorrect: boolean; pointsAwarded: number }>();
+    detailData.questions.forEach(q => {
+      initialAnswers.set(q.questionId, {
+        isCorrect: q.isCorrect ?? false,
+        pointsAwarded: q.pointsAwarded ?? 0,
+      });
+    });
+    
+    setRegradeAnswers(initialAnswers);
+    setRegradingMode(true);
+  };
+
+  const cancelRegrading = () => {
+    setRegradingMode(false);
+    setRegradeAnswers(new Map());
+  };
+
+  const toggleAnswerCorrectness = (questionId: string, points: number) => {
+    const newAnswers = new Map(regradeAnswers);
+    const current = newAnswers.get(questionId);
+    
+    if (current) {
+      const newIsCorrect = !current.isCorrect;
+      newAnswers.set(questionId, {
+        isCorrect: newIsCorrect,
+        pointsAwarded: newIsCorrect ? points : 0,
+      });
+    }
+    
+    setRegradeAnswers(newAnswers);
+  };
+
+  const submitRegrade = async () => {
+    if (!selectedItem || selectedItem.type !== 'submission') return;
+    
+    const answers = Array.from(regradeAnswers.entries()).map(([questionId, data]) => ({
+      questionId,
+      isCorrect: data.isCorrect,
+      pointsAwarded: data.pointsAwarded,
+    }));
+
+    setRegrading(true);
+    try {
+      const res = await fetch(`/api/admin/submissions/${selectedItem.id}/regrade`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answers }),
+      });
+
+      if (!res.ok) throw new Error("Failed to regrade");
+
+      const result = await res.json();
+      alert(`Chấm lại thành công! Điểm mới: ${result.newScore}/10`);
+
+      // Reload detail and stats
+      const detailRes = await fetch(`/api/admin/submissions/${selectedItem.id}/detail`);
+      if (detailRes.ok) {
+        const data = await detailRes.json();
+        if (detailData?.submission) {
+          setDetailData({
+            questions: data.questions,
+            submission: {
+              ...detailData.submission,
+              score: result.newScore,
+            },
+          });
+        }
+      }
+
+      // Reload stats
+      const statsRes = await fetch("/api/admin/stats");
+      if (statsRes.ok) {
+        const data = await statsRes.json();
+        setStudents(data);
+      }
+
+      setRegradingMode(false);
+      setRegradeAnswers(new Map());
+    } catch (error) {
+      console.error("Error regrading:", error);
+      alert("Có lỗi xảy ra khi chấm lại");
+    } finally {
+      setRegrading(false);
+    }
+  };
+
 
   if (loading) {
     return (
@@ -569,24 +665,54 @@ export default function AdminStatsPage() {
                 {/* Thông tin tổng quan */}
                 <div className="p-4 bg-slate-50 border-b border-slate-200">
                   {selectedItem.type === 'submission' && detailData.submission ? (
-                    <div className="grid grid-cols-3 gap-4">
-                      <div>
-                        <p className="text-xs text-slate-600">Điểm</p>
-                        <p className="text-lg font-bold text-slate-900">{detailData.submission.score}/10</p>
+                    <>
+                      <div className="grid grid-cols-3 gap-4">
+                        <div>
+                          <p className="text-xs text-slate-600">Điểm</p>
+                          <p className="text-lg font-bold text-slate-900">{detailData.submission.score}/10</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-600">Thời gian làm bài</p>
+                          <p className="text-lg font-bold text-slate-900">
+                            {Math.round(detailData.submission.durationSeconds / 60)} phút
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-600">Nộp lúc</p>
+                          <p className="text-sm font-medium text-slate-900">
+                            {new Date(detailData.submission.submittedAt).toLocaleString("vi-VN")}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-xs text-slate-600">Thời gian làm bài</p>
-                        <p className="text-lg font-bold text-slate-900">
-                          {Math.round(detailData.submission.durationSeconds / 60)} phút
-                        </p>
+                      {/* Regrade buttons */}
+                      <div className="mt-4 flex gap-2">
+                        {!regradingMode ? (
+                          <button
+                            onClick={startRegrading}
+                            className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition"
+                          >
+                            🔄 Chấm lại bài
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              onClick={submitRegrade}
+                              disabled={regrading}
+                              className="px-4 py-2 text-sm font-semibold text-white bg-green-600 rounded-lg hover:bg-green-700 transition disabled:opacity-50"
+                            >
+                              {regrading ? "Đang lưu..." : "✓ Lưu điểm mới"}
+                            </button>
+                            <button
+                              onClick={cancelRegrading}
+                              disabled={regrading}
+                              className="px-4 py-2 text-sm font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition disabled:opacity-50"
+                            >
+                              Hủy
+                            </button>
+                          </>
+                        )}
                       </div>
-                      <div>
-                        <p className="text-xs text-slate-600">Nộp lúc</p>
-                        <p className="text-sm font-medium text-slate-900">
-                          {new Date(detailData.submission.submittedAt).toLocaleString("vi-VN")}
-                        </p>
-                      </div>
-                    </div>
+                    </>
                   ) : detailData.session ? (
                     <div className="grid grid-cols-2 gap-4">
                       <div>
@@ -611,12 +737,16 @@ export default function AdminStatsPage() {
                     const hasAnswer = q.studentAnswer !== undefined && q.studentAnswer !== null && q.studentAnswer !== "";
                     const isSubmitted = selectedItem.type === 'submission';
                     
+                    // Get regrade status
+                    const regradeAnswer = regradeAnswers.get(q.questionId);
+                    const displayIsCorrect = regradingMode ? (regradeAnswer?.isCorrect ?? false) : (q.isCorrect ?? false);
+                    
                     // Xác định màu border và background
                     let borderColor = "border-slate-200";
                     let bgColor = "bg-white";
                     
                     if (isSubmitted && hasAnswer) {
-                      if (q.isCorrect) {
+                      if (displayIsCorrect) {
                         borderColor = "border-green-300";
                         bgColor = "bg-green-50";
                       } else {
@@ -639,13 +769,28 @@ export default function AdminStatsPage() {
                               {q.type === "mcq" ? "Trắc nghiệm" : "Tự luận"} · {q.points.toFixed(2)} điểm
                             </span>
                           </div>
-                          <div>
+                          <div className="flex items-center gap-2">
                             {isSubmitted && hasAnswer && (
-                              <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                                q.isCorrect ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
-                              }`}>
-                                {q.isCorrect ? "✓ Đúng" : "✗ Sai"}
-                              </span>
+                              <>
+                                {regradingMode ? (
+                                  <button
+                                    onClick={() => toggleAnswerCorrectness(q.questionId, q.points)}
+                                    className={`px-3 py-1 text-xs font-semibold rounded-full border-2 transition ${
+                                      displayIsCorrect 
+                                        ? "border-green-500 bg-green-100 text-green-700 hover:bg-green-200" 
+                                        : "border-red-500 bg-red-100 text-red-700 hover:bg-red-200"
+                                    }`}
+                                  >
+                                    {displayIsCorrect ? "✓ Đúng" : "✗ Sai"} · Click để đổi
+                                  </button>
+                                ) : (
+                                  <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                    displayIsCorrect ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                                  }`}>
+                                    {displayIsCorrect ? "✓ Đúng" : "✗ Sai"}
+                                  </span>
+                                )}
+                              </>
                             )}
                             {!isSubmitted && hasAnswer && (
                               <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-700">

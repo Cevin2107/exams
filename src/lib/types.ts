@@ -17,7 +17,7 @@ export interface Question {
   id: string;
   assignmentId: string;
   order: number;
-  type: "mcq" | "essay";
+  type: "mcq" | "essay" | "section";
   content: string;
   choices?: string[];
   answerKey?: string;
