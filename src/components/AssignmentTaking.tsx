@@ -214,9 +214,8 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
             setQuestions(newQuestions);
           }
         }
-      } catch (err) {
+      } catch {
         // Silent fail để không spam console
-        // console.error("Lỗi khi cập nhật câu hỏi:", err);
       }
     };
 
@@ -227,6 +226,7 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
     const intervalId = setInterval(fetchQuestions, 3000);
     
     return () => clearInterval(intervalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignment.id, sessionId, questions.length, submitting, hasSubmitted]);
 
   const timeUp = hasTimer && remaining === 0;
