@@ -32,7 +32,7 @@ const formatVietnamTime = (date: Date) => {
   return new Intl.DateTimeFormat('vi-VN', options).format(date);
 };
 
-export function AssignmentTaking({ assignment, questions }: Props) {
+export function AssignmentTaking({ assignment, questions: initialQuestions }: Props) {
   const router = useRouter();
   const [studentName, setStudentName] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -41,7 +41,11 @@ export function AssignmentTaking({ assignment, questions }: Props) {
   const [remaining, setRemaining] = useState(initialSeconds);
   const [currentVietnamTime, setCurrentVietnamTime] = useState(new Date());
   const [serverDeadline, setServerDeadline] = useState<Date | null>(null);
+  const [questions, setQuestions] = useState<Question[]>(initialQuestions);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [hasSubmitted, setHasSubmitted] = useState(false);
+  const [startTime] = useState(Date.now());
   const draftKey = useMemo(() => `assignment-draft-${assignment.id}`, [assignment.id]);
   const hasAutoSubmitted = useRef(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
@@ -170,12 +174,64 @@ export function AssignmentTaking({ assignment, questions }: Props) {
     return () => clearTimeout(timeoutId);
   }, [answers, sessionId, draftKey]);
 
+  // Polling: Tự động cập nhật câu hỏi mỗi 3 giây
+  useEffect(() => {
+    if (!sessionId || submitting || hasSubmitted) return;
+
+    const fetchQuestions = async () => {
+      try {
+        const res = await fetch(`/api/assignments/${assignment.id}/questions`);
+        if (!res.ok) {
+          console.warn(`Failed to fetch questions: ${res.status}`);
+          return;
+        }
+        
+        const data = await res.json();
+        const newQuestions = data.questions as Question[];
+        
+        if (!newQuestions || !Array.isArray(newQuestions)) {
+          console.warn("Invalid questions data received");
+          return;
+        }
+        
+        // Chỉ update nếu có thay đổi (số lượng hoặc nội dung)
+        if (newQuestions.length !== questions.length) {
+          console.log(`📝 Cập nhật: ${Math.abs(newQuestions.length - questions.length)} câu hỏi ${newQuestions.length > questions.length ? 'mới' : 'đã xóa'}`);
+          setQuestions(newQuestions);
+        } else if (newQuestions.length > 0) {
+          // Kiểm tra nội dung có thay đổi không
+          const hasChanges = newQuestions.some((newQ, idx) => {
+            const oldQ = questions[idx];
+            if (!oldQ) return true;
+            
+            return newQ.content !== oldQ.content || 
+                   JSON.stringify(newQ.choices || []) !== JSON.stringify(oldQ.choices || []) ||
+                   (newQ.imageUrl || '') !== (oldQ.imageUrl || '');
+          });
+          
+          if (hasChanges) {
+            console.log("📝 Cập nhật: Nội dung câu hỏi đã thay đổi");
+            setQuestions(newQuestions);
+          }
+        }
+      } catch (err) {
+        // Silent fail để không spam console
+        // console.error("Lỗi khi cập nhật câu hỏi:", err);
+      }
+    };
+
+    // Fetch ngay lần đầu
+    fetchQuestions();
+
+    // Sau đó fetch mỗi 3 giây
+    const intervalId = setInterval(fetchQuestions, 3000);
+    
+    return () => clearInterval(intervalId);
+  }, [assignment.id, sessionId, questions.length, submitting, hasSubmitted]);
+
   const timeUp = hasTimer && remaining === 0;
   const locked = timeUp;
   const answeredCount = useMemo(() => Object.keys(answers).length, [answers]);
-  const [submitting, setSubmitting] = useState(false);
-  const [hasSubmitted, setHasSubmitted] = useState(false);
-  const [startTime] = useState(Date.now());
 
   const handleSubmit = useCallback(async (isAutoSubmit = false) => {
     if (submitting || (locked && !isAutoSubmit)) return;

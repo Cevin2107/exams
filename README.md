@@ -33,9 +33,27 @@ npm run dev
 - `src/components` – Header, AssignmentList (lọc/tìm kiếm demo)
 - `src/lib` – Supabase clients, sample data, types
 
-## Supabase (đề xuất bảng)
-- `assignments`, `questions`, `submissions`, `answers`, `admin_settings`
-- Bật RLS, anon chỉ được đọc assignments/questions và ghi submissions/answers.
+## Database Schema & Management
+
+### Bảng dữ liệu (6 bảng chính)
+1. **assignments** - Bài tập
+2. **questions** - Câu hỏi trong bài tập
+3. **submissions** - Bài nộp của học sinh (unique per student per assignment)
+4. **answers** - Câu trả lời trong bài nộp
+5. **student_sessions** - Phiên làm bài (tracking: active/exited/submitted)
+6. **admin_settings** - Cài đặt mật khẩu admin
+
+### Khởi tạo Database
+Chạy file `supabase/schema.sql` trong Supabase SQL Editor để tạo tất cả bảng, indexes, RLS policies và storage bucket.
+
+### Quản lý & Dọn dẹp
+- **Kiểm tra database**: `supabase/check_all_tables.sql`
+- **Kiểm tra kích thước**: `supabase/check_database_size.sql`
+- **Dọn dẹp dữ liệu cũ**: `supabase/cleanup_old_data.sql`
+- **Hướng dẫn chi tiết**: Xem [DATABASE_CLEANUP_GUIDE.md](DATABASE_CLEANUP_GUIDE.md)
+
+### Storage Bucket
+- `question-images` - Lưu ảnh câu hỏi (public read, service role write)
 
 ## Tạo bài bằng AI (OCR + sinh câu hỏi)
 - Tab "Tạo bằng AI" trong Admin → Tạo bài tập: dán/upload nhiều ảnh, PDF, hoặc kèm văn bản.

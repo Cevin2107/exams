@@ -1,8 +1,14 @@
--- Supabase schema for Gia sư Đào Bá Anh Quân
--- Run in Supabase SQL editor
+-- ============================================
+-- Supabase Schema - Hệ thống bài tập online
+-- ============================================
+-- Chạy toàn bộ file này trong Supabase SQL Editor để khởi tạo database
+-- Bao gồm: 6 bảng chính + indexes + RLS policies + storage bucket
 
 create extension if not exists "pgcrypto";
 
+-- ============================================
+-- TABLE 1: assignments - Bài tập
+-- ============================================
 create table if not exists assignments (
   id uuid primary key default gen_random_uuid(),
   title text not null,
@@ -16,6 +22,9 @@ create table if not exists assignments (
   updated_at timestamptz not null default now()
 );
 
+-- ============================================
+-- TABLE 2: questions - Câu hỏi trong bài tập
+-- ============================================
 create table if not exists questions (
   id uuid primary key default gen_random_uuid(),
   assignment_id uuid not null references assignments(id) on delete cascade,
@@ -26,9 +35,9 @@ create table if not exists questions (
   answer_key text,
   points numeric not null default 1,
   image_url text,
-  created_at timestamptz not null default now()
-);
-
+-- ============================================
+-- TABLE 3: submissions - Bài nộp của học sinh
+-- ============================================
 create table if not exists submissions (
   id uuid primary key default gen_random_uuid(),
   assignment_id uuid not null references assignments(id) on delete cascade,
@@ -38,16 +47,27 @@ create table if not exists submissions (
   score numeric,
   status text not null default 'pending' check (status in ('pending','scored')),
   duration_seconds integer,
-  created_at timestamptz not null default now()
-);
-
--- Bảng tracking trạng thái học sinh (đang làm, đã thoát, đã nộp)
+  created_at timestamptz not null default now(),
+  -- Một học sinh chỉ submit 1 lần cho mỗi bài (cho phép resubmit thì update)
+  constraint unique_student_assignment unique (assignment_id, student_name
+  s============================================
+-- TABLE 4: student_sessions - Phiên làm bài
+-- ============================================
+-- Tracking: đang làm, thoát tab, đã nộp
 create table if not exists student_sessions (
   id uuid primary key default gen_random_uuid(),
   assignment_id uuid not null references assignments(id) on delete cascade,
   student_name text not null,
   status text not null default 'active' check (status in ('active','exited','submitted')),
   started_at timestamptz not null default now(),
+  deadline_at timestamptz,  -- Thời điểm deadline = started_at + duration
+  last_activity_at timestamptz not null default now(),
+  exit_count integer not null default 0,  -- Số lần thoát tab
+  submission_id uuid references submissions(id) on delete set null,
+  draft_answers jsonb default '{}'::jsonb,  -- Câu trả lời nháp
+-- ============================================
+-- TABLE 5: answers - Câu trả lời trong bài nộp
+-- ============================================
   deadline_at timestamptz,  -- Thời điểm deadline tính theo started_at + duration
   last_activity_at timestamptz not null default now(),
   exit_count integer not null default 0,  -- Số lần thoát tab/trình duyệt
@@ -60,15 +80,23 @@ create table if not exists answers (
   id uuid primary key default gen_random_uuid(),
   submission_id uuid not null references submissions(id) on delete cascade,
   question_id uuid not null references questions(id) on delete cascade,
-  answer text,
-  is_correct boolean,
-  points_awarded numeric,
-  created_at timestamptz not null default now()
-);
-
+-- ============================================
+-- TABLE 6: admin_settings - Cài đặt admin
+-- ============================================
 create table if not exists admin_settings (
   id integer primary key default 1,
   admin_password_hash text not null,
+  created_at timestamptz not null default now(),
+  u============================================
+-- INDEXES - Tăng tốc truy vấn
+-- ============================================at timestamptz not null default now(),
+  constraint single_admin_row check (id = 1
+
+create table if not exists admin_settings (
+  id integer primary key default 1,
+  a============================================
+-- ROW LEVEL SECURITY (RLS)
+-- ============================================n_password_hash text not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -143,7 +171,9 @@ create policy "Service role manage answers" on answers
 -- Only service role can read admin settings
 create policy "Service role read admin settings" on admin_settings
   for select using (auth.role() = 'service_role');
-create policy "Service role update admin settings" on admin_settings
+cre============================================
+-- STORAGE BUCKET - Lưu ảnh câu hỏi
+-- ============================================min settings" on admin_settings
   for update using (auth.role() = 'service_role') with check (true);
 
 -- Public can insert and update student sessions
