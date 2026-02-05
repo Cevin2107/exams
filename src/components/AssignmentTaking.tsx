@@ -48,6 +48,15 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
   const [startTime] = useState(Date.now());
   const draftKey = useMemo(() => `assignment-draft-${assignment.id}`, [assignment.id]);
   const hasAutoSubmitted = useRef(false);
+
+  // Log initial questions để debug
+  useEffect(() => {
+    console.log("📸 Initial questions with images:", initialQuestions.map(q => ({
+      id: q.id,
+      content: q.content?.substring(0, 30),
+      imageUrl: q.imageUrl
+    })));
+  }, [initialQuestions]);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
@@ -199,30 +208,43 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
           console.log(`📝 Cập nhật: ${Math.abs(newQuestions.length - questions.length)} câu hỏi ${newQuestions.length > questions.length ? 'mới' : 'đã xóa'}`);
           setQuestions(newQuestions);
         } else if (newQuestions.length > 0) {
-          // Kiểm tra nội dung có thay đổi không
-          const hasChanges = newQuestions.some((newQ, idx) => {
-            const oldQ = questions[idx];
-            if (!oldQ) return true;
+          // Kiểm tra từng câu hỏi có thay đổi không
+          const updatedQuestions = questions.map((oldQ, idx) => {
+            const newQ = newQuestions.find(q => q.id === oldQ.id);
+            if (!newQ) return oldQ; // Giữ nguyên nếu không tìm thấy
             
-            return newQ.content !== oldQ.content || 
-                   JSON.stringify(newQ.choices || []) !== JSON.stringify(oldQ.choices || []) ||
-                   (newQ.imageUrl || '') !== (oldQ.imageUrl || '');
+            // So sánh các trường quan trọng
+            const hasContentChange = newQ.content !== oldQ.content;
+            const hasChoicesChange = JSON.stringify(newQ.choices || []) !== JSON.stringify(oldQ.choices || []);
+            const hasImageChange = (newQ.imageUrl || '') !== (oldQ.imageUrl || '');
+            
+            // Nếu có thay đổi, dùng câu hỏi mới, nhưng bảo toàn imageUrl nếu mới bị null
+            if (hasContentChange || hasChoicesChange || hasImageChange) {
+              // Nếu imageUrl mới là null/undefined nhưng cũ có giá trị, giữ lại giá trị cũ
+              if (!newQ.imageUrl && oldQ.imageUrl) {
+                console.log(`⚠️ Giữ lại ảnh cho câu ${idx + 1}: ${oldQ.imageUrl}`);
+                return { ...newQ, imageUrl: oldQ.imageUrl };
+              }
+              return newQ;
+            }
+            
+            return oldQ; // Không thay đổi gì
           });
           
-          if (hasChanges) {
+          // Kiểm tra có thay đổi thực sự không
+          const hasRealChanges = updatedQuestions.some((q, idx) => q !== questions[idx]);
+          if (hasRealChanges) {
             console.log("📝 Cập nhật: Nội dung câu hỏi đã thay đổi");
-            setQuestions(newQuestions);
+            setQuestions(updatedQuestions);
           }
         }
-      } catch {
-        // Silent fail để không spam console
+      } catch (err) {
+        console.error("Error fetching questions:", err);
       }
     };
 
-    // Fetch ngay lần đầu
-    fetchQuestions();
-
-    // Sau đó fetch mỗi 3 giây
+    // KHÔNG fetch ngay lần đầu, chỉ bắt đầu polling sau 3 giây
+    // Vì initialQuestions đã có đầy đủ dữ liệu từ server
     const intervalId = setInterval(fetchQuestions, 3000);
     
     return () => clearInterval(intervalId);
@@ -478,7 +500,16 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
                           <p className="text-sm font-bold uppercase tracking-wide text-blue-700 mb-1">📢 Thông báo</p>
                           {q.imageUrl && (
                             <div className="my-3 rounded-lg border border-blue-200 p-2 bg-white">
-                              <img src={q.imageUrl} alt="Thông báo" className="max-h-64 w-auto rounded" />
+                              <img 
+                                src={q.imageUrl} 
+                                alt="Thông báo" 
+                                className="max-h-64 w-auto rounded"
+                                loading="eager"
+                                onError={(e) => {
+                                  console.error(`Failed to load image for section ${q.id}:`, q.imageUrl);
+                                  (e.target as HTMLImageElement).style.display = 'none';
+                                }}
+                              />
                             </div>
                           )}
                           <p className="text-base font-semibold text-slate-900 leading-relaxed">{q.content}</p>
@@ -490,7 +521,17 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Câu {idx + 1}</p>
                         {q.imageUrl && (
                           <div className="my-3 rounded-lg border border-slate-200 p-2 bg-white">
-                            <img src={q.imageUrl} alt="Câu hỏi" className="max-h-64 w-auto rounded" />
+                            <img 
+                              src={q.imageUrl} 
+                              alt="Câu hỏi" 
+                              className="max-h-64 w-auto rounded"
+                              loading="eager"
+                              onError={(e) => {
+                                console.error(`Failed to load image for question ${q.id}:`, q.imageUrl);
+                                // Ẩn ảnh nếu load lỗi
+                                (e.target as HTMLImageElement).style.display = 'none';
+                              }}
+                            />
                           </div>
                         )}
                         {q.content && <p className="text-base font-medium text-slate-900 mt-2">{q.content}</p>}
