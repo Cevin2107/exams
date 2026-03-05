@@ -41,19 +41,17 @@ export async function POST(
 
     // Cộng thêm extraMinutes vào deadline_at của từng session
     const extraMs = extraMinutes * 60 * 1000;
-    const updates = sessions.map((s) => ({
-      id: s.id,
-      deadline_at: new Date(new Date(s.deadline_at).getTime() + extraMs).toISOString(),
-    }));
 
-    // Upsert từng session
-    const { error: updateError } = await supabase
-      .from("student_sessions")
-      .upsert(updates, { onConflict: "id" });
+    for (const s of sessions) {
+      const newDeadline = new Date(new Date(s.deadline_at).getTime() + extraMs).toISOString();
+      const { error: updateError } = await supabase
+        .from("student_sessions")
+        .update({ deadline_at: newDeadline })
+        .eq("id", s.id);
+      if (updateError) throw updateError;
+    }
 
-    if (updateError) throw updateError;
-
-    return NextResponse.json({ success: true, updatedCount: updates.length });
+    return NextResponse.json({ success: true, updatedCount: sessions.length });
   } catch (error) {
     console.error("Error extending time:", error);
     return NextResponse.json({ error: "Failed to extend time" }, { status: 500 });
