@@ -137,6 +137,9 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const [regradeSubPointsMap, setRegradeSubPointsMap] = useState<Map<string, Map<string, number>>>(new Map());
   const [regradeMode, setRegradeMode] = useState(false);
   const [savingRegrade, setSavingRegrade] = useState(false);
+  const [showExtendTime, setShowExtendTime] = useState(false);
+  const [extraMinutes, setExtraMinutes] = useState(10);
+  const [extendingTime, setExtendingTime] = useState(false);
   
   // AI generation states
   const [aiFiles, setAiFiles] = useState<File[]>([]);
@@ -308,6 +311,30 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     } catch (err) {
       console.error("Lỗi xóa sessions:", err);
       alert("Có lỗi khi xóa");
+    }
+  };
+
+  const handleExtendTime = async () => {
+    if (!extraMinutes || extraMinutes <= 0) return;
+    setExtendingTime(true);
+    try {
+      const res = await fetch(`/api/admin/assignments/${assignmentId}/extend-time`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ extraMinutes }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setToast({ message: `Đã gia hạn thêm ${extraMinutes} phút cho ${data.updatedCount} học sinh đang làm bài`, type: "success" });
+        setShowExtendTime(false);
+      } else {
+        setToast({ message: data.error || "Có lỗi khi gia hạn thời gian", type: "error" });
+      }
+    } catch (err) {
+      console.error("Lỗi gia hạn thời gian:", err);
+      setToast({ message: "Có lỗi khi gia hạn thời gian", type: "error" });
+    } finally {
+      setExtendingTime(false);
     }
   };
 
@@ -1444,6 +1471,14 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                   )}
                 </>
               )}
+              {assignment?.duration_minutes && (
+                <button
+                  onClick={() => setShowExtendTime(true)}
+                  className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-700 shadow-sm hover:border-orange-400"
+                >
+                  ⏱ Gia hạn giờ
+                </button>
+              )}
               <button
                 onClick={() => loadStudentSessions(assignmentId)}
                 className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:border-slate-400"
@@ -1452,6 +1487,45 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
               </button>
             </div>
           </div>
+
+          {/* Modal gia hạn thời gian */}
+          {showExtendTime && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+              <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+                <h4 className="text-lg font-bold text-slate-900 mb-1">Gia hạn thời gian làm bài</h4>
+                <p className="text-sm text-slate-500 mb-4">
+                  Thêm thời gian cho tất cả học sinh đang làm bài. Đồng hồ trên máy học sinh sẽ tự động cập nhật.
+                </p>
+                <div className="flex items-center gap-3 mb-5">
+                  <label className="text-sm font-medium text-slate-700 whitespace-nowrap">Thêm (phút):</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={180}
+                    value={extraMinutes}
+                    onChange={(e) => setExtraMinutes(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-24 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                  />
+                  <span className="text-sm text-slate-500">phút</span>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => setShowExtendTime(false)}
+                    className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    onClick={handleExtendTime}
+                    disabled={extendingTime}
+                    className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600 disabled:opacity-60"
+                  >
+                    {extendingTime ? "Đang cập nhật..." : `Gia hạn +${extraMinutes} phút`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Thống kê nhanh */}
           {studentSessions.length > 0 && (

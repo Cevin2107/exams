@@ -105,6 +105,34 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
     return () => clearInterval(id);
   }, []);
 
+  // Polling deadline từ server mỗi 15 giây để tự động cập nhật khi admin gia hạn
+  useEffect(() => {
+    if (!sessionId || submitting || hasSubmitted) return;
+
+    const fetchDeadline = async () => {
+      try {
+        const res = await fetch(`/api/student-sessions/check-deadline?sessionId=${sessionId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.deadlineAt) {
+          setServerDeadline(prev => {
+            const newDeadline = new Date(data.deadlineAt);
+            // Chỉ cập nhật nếu deadline mới khác deadline cũ (admin đã gia hạn)
+            if (!prev || Math.abs(newDeadline.getTime() - prev.getTime()) > 1000) {
+              return newDeadline;
+            }
+            return prev;
+          });
+        }
+      } catch (err) {
+        console.error("Failed to poll deadline:", err);
+      }
+    };
+
+    const id = setInterval(fetchDeadline, 15000);
+    return () => clearInterval(id);
+  }, [sessionId, submitting, hasSubmitted]);
+
   // Tính thời gian còn lại dựa trên server deadline
   useEffect(() => {
     if (!serverDeadline) return;
