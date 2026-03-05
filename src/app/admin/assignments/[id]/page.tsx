@@ -2585,7 +2585,23 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
             ) : studentDetail ? (
               <div className="p-6">
                 <div className="space-y-3">
-                  {studentDetail.questions.map((q) => {
+                  {(() => {
+                    let qNum = 0;
+                    return studentDetail.questions.map((q) => {
+                    // Render section as a heading, not a question
+                    if (q.type === "section") {
+                      return (
+                        <div key={q.questionId} className="rounded-lg border-2 border-amber-300 bg-amber-50 px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-amber-600">📌</span>
+                            <p className="text-sm font-semibold text-amber-800">{q.content}</p>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    qNum++;
+                    const currentNum = qNum;
                     const hasAnswer = q.studentAnswer !== undefined && q.studentAnswer !== null && q.studentAnswer !== "";
                     const isSubmitted = studentDetail.status === "submitted";
                     
@@ -2611,7 +2627,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                         <div className="flex items-start justify-between mb-2">
                           <div className="flex items-center gap-2">
                             <span className="inline-flex items-center rounded-md bg-slate-200 px-2 py-1 text-xs font-bold text-slate-700">
-                              Câu {q.order}
+                              Câu {currentNum}
                             </span>
                             <span className="text-xs text-slate-600">
                               {q.type === "mcq" ? "Trắc nghiệm" : q.type === "essay" ? "Tự luận" : q.type === "short_answer" ? "Trả lời ngắn" : q.type === "true_false" ? "Đúng/Sai" : q.type} · {q.points.toFixed(2)} điểm
@@ -2811,7 +2827,8 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                         )}
                       </div>
                     );
-                  })}
+                    });
+                  })()}
                 </div>
               </div>
             ) : (
