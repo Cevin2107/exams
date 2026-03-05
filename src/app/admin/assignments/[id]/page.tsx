@@ -18,17 +18,19 @@ interface Assignment {
   due_at?: string | null;
   duration_minutes?: number | null;
   is_hidden?: boolean;
+  hide_score?: boolean;
 }
 
 interface Question {
   id: string;
   order: number;
-  type: "mcq" | "essay" | "section";
+  type: "mcq" | "essay" | "section" | "short_answer" | "true_false";
   content: string;
   choices?: string[];
   answerKey?: string;
   points: number;
   imageUrl?: string;
+  subQuestions?: SubQuestionItem[];
 }
 
 interface Analytics {
@@ -40,12 +42,20 @@ interface Analytics {
   questionStats: Array<{ questionId: string; content: string; correctRate: number; total: number; order: number }>;
 }
 
+interface SubQuestionItem {
+  id: string;
+  content: string;
+  answerKey: "true" | "false";
+  order: number;
+}
+
 interface EditQuestionForm {
   content: string;
-  type: "mcq" | "essay" | "section";
+  type: "mcq" | "essay" | "section" | "short_answer" | "true_false";
   choices: string[];
   answerKey: string;
   imageUrl: string;
+  subQuestions: SubQuestionItem[];
 }
 
 interface AiQuestion {
@@ -87,6 +97,8 @@ interface QuestionDetail {
   studentAnswer?: string;
   isCorrect?: boolean;
   points: number;
+  pointsAwarded?: number;
+  subQuestions?: SubQuestionItem[];
 }
 
 interface StudentDetail {
@@ -121,6 +133,10 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const [showStudentDetail, setShowStudentDetail] = useState(false);
   const [studentDetail, setStudentDetail] = useState<StudentDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [regradePointsMap, setRegradePointsMap] = useState<Map<string, number>>(new Map());
+  const [regradeSubPointsMap, setRegradeSubPointsMap] = useState<Map<string, Map<string, number>>>(new Map());
+  const [regradeMode, setRegradeMode] = useState(false);
+  const [savingRegrade, setSavingRegrade] = useState(false);
   
   // AI generation states
   const [aiFiles, setAiFiles] = useState<File[]>([]);
@@ -135,6 +151,11 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const [selectedAiQuestionIndices, setSelectedAiQuestionIndices] = useState<Set<number>>(new Set());
   const [draggedQuestionId, setDraggedQuestionId] = useState<string | null>(null);
   const [showAddSectionForm, setShowAddSectionForm] = useState(false);
+  const [sectionImagePreview, setSectionImagePreview] = useState("");
+  const [sectionUploading, setSectionUploading] = useState(false);
+  const [addFormType, setAddFormType] = useState<"mcq" | "essay" | "short_answer" | "true_false">("mcq");
+  const [mcqChoiceCount, setMcqChoiceCount] = useState(4);
+  const [newSubQuestions, setNewSubQuestions] = useState<SubQuestionItem[]>([]);
   const [editForm, setEditForm] = useState({
     title: "",
     subject: "",
@@ -143,6 +164,8 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     durationMinutes: "",
     totalScore: "",
     isHidden: false,
+    hideScore: false,
+    pointRanges: [] as Array<{ fromQuestion: number; toQuestion: number; totalPoints: number }>,
   });
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const [editQuestionForm, setEditQuestionForm] = useState<EditQuestionForm>({
@@ -151,6 +174,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     choices: ["", "", "", ""],
     answerKey: "A",
     imageUrl: "",
+    subQuestions: [],
   });
   const router = useRouter();
   const subjectSelectValue = SUBJECT_OPTIONS.includes(editForm.subject) ? editForm.subject : CUSTOM_VALUE;
@@ -215,6 +239,8 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
           durationMinutes: data.assignment.duration_minutes ?? "",
           totalScore: data.assignment.total_score?.toString() ?? "",
           isHidden: Boolean(data.assignment.is_hidden),
+          hideScore: Boolean(data.assignment.hide_score),
+          pointRanges: data.assignment.point_ranges || [],
         });
       }
       loadAnalytics(id);
@@ -329,10 +355,31 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
               correctAnswer: q.answerKey,  // API trả về answerKey, không phải correctAnswer
               studentAnswer: q.studentAnswer,
               isCorrect: q.isCorrect,
-              points: q.points
+              points: q.points,
+              pointsAwarded: q.pointsAwarded ?? q.points,
+              subQuestions: q.subQuestions || [],
             }))
           };
           setStudentDetail(detail);
+          // Initialize regrade map
+          const initMap = new Map<string, number>();
+          const initSubMap = new Map<string, Map<string, number>>();
+          detail.questions.forEach(q => {
+            initMap.set(q.questionId, q.pointsAwarded ?? q.points);
+            if (q.type === "true_false" && q.subQuestions && q.subQuestions.length > 0) {
+              const subMap = new Map<string, number>();
+              const pointPerSub = q.points / q.subQuestions.length;
+              let studentAnswers: Record<string, string> = {};
+              try { studentAnswers = q.studentAnswer ? JSON.parse(q.studentAnswer) : {}; } catch { /* ok */ }
+              q.subQuestions.forEach(sub => {
+                const isSubCorrect = (studentAnswers[sub.id] || "").toLowerCase() === (sub.answerKey || "").toLowerCase();
+                subMap.set(sub.id, isSubCorrect ? pointPerSub : 0);
+              });
+              initSubMap.set(q.questionId, subMap);
+            }
+          });
+          setRegradePointsMap(initMap);
+          setRegradeSubPointsMap(initSubMap);
         }
       } else {
         // Chưa nộp bài, load từ session với draft_answers
@@ -359,7 +406,8 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
               correctAnswer: q.answerKey,
               studentAnswer: draftAnswers[q.questionId],  // Sử dụng questionId thay vì q.id
               isCorrect: undefined, // Chưa chấm
-              points: q.points
+              points: q.points,
+              subQuestions: q.subQuestions || [],
             }))
           };
           setStudentDetail(detail);
@@ -370,6 +418,45 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       alert("Không thể tải chi tiết");
     } finally {
       setLoadingDetail(false);
+    }
+  }
+
+  async function submitRegrade() {
+    if (!studentDetail?.submissionId || savingRegrade) return;
+    setSavingRegrade(true);
+    try {
+      const answers = studentDetail.questions.map(q => {
+        let pointsAwarded: number;
+        if (q.type === "true_false" && regradeSubPointsMap.has(q.questionId)) {
+          const subMap = regradeSubPointsMap.get(q.questionId)!;
+          pointsAwarded = Array.from(subMap.values()).reduce((a, b) => a + b, 0);
+        } else {
+          pointsAwarded = regradePointsMap.get(q.questionId) ?? q.pointsAwarded ?? 0;
+        }
+        return {
+          questionId: q.questionId,
+          isCorrect: pointsAwarded > 0,
+          pointsAwarded,
+        };
+      });
+
+      const res = await fetch(`/api/admin/submissions/${studentDetail.submissionId}/regrade`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answers }),
+      });
+
+      if (!res.ok) throw new Error("Chấm lại thất bại");
+      const result = await res.json();
+      setToast({ message: `Chấm lại thành công! Điểm mới: ${result.newScore?.toFixed(2) ?? "?"}`, type: "success" });
+      setRegradeMode(false);
+      setShowStudentDetail(false);
+      await loadStudentSessions(assignmentId);
+    } catch (err) {
+      console.error("Lỗi chấm lại:", err);
+      setToast({ message: "Không thể chấm lại bài", type: "error" });
+    } finally {
+      setSavingRegrade(false);
     }
   }
 
@@ -434,14 +521,9 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     
-    const type = formData.get("type") as string;
+    const type = addFormType;
     const choices = type === "mcq" 
-      ? [
-          formData.get("choice0") as string,
-          formData.get("choice1") as string,
-          formData.get("choice2") as string,
-          formData.get("choice3") as string,
-        ].filter(Boolean)
+      ? Array.from({ length: mcqChoiceCount }, (_, i) => formData.get(`choice${i}`) as string).filter(Boolean)
       : undefined;
 
     const data = {
@@ -450,8 +532,13 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       type,
       content: formData.get("content") as string,
       choices,
-      answerKey: type === "mcq" ? (formData.get("answerKey") as string) : undefined,
+      answerKey: type === "mcq" 
+        ? (formData.get("answerKey") as string) 
+        : type === "short_answer" 
+          ? (formData.get("shortAnswerKey") as string) || undefined
+          : undefined,
       imageUrl: imagePreview || undefined,
+      subQuestions: type === "true_false" ? newSubQuestions : undefined,
     };
 
     try {
@@ -464,6 +551,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       if (res.ok) {
         setShowAddForm(false);
         setImagePreview("");
+        setNewSubQuestions([]);
         loadData(assignmentId);
       } else {
         console.error("Lỗi thêm câu hỏi");
@@ -498,6 +586,8 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
         durationMinutes: editForm.durationMinutes === "" ? null : Number(editForm.durationMinutes),
         totalScore: editForm.totalScore === "" ? undefined : Number(editForm.totalScore),
         isHidden: editForm.isHidden,
+        hideScore: editForm.hideScore,
+        pointRanges: editForm.pointRanges.length > 0 ? editForm.pointRanges : null,
       };
 
       const res = await fetch(`/api/admin/assignments/${assignmentId}`, {
@@ -560,10 +650,11 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     setEditingQuestionId(q.id);
     setEditQuestionForm({
       content: q.content,
-      type: q.type as "mcq" | "essay" | "section",
+      type: q.type as "mcq" | "essay" | "section" | "short_answer" | "true_false",
       choices: q.choices || ["", "", "", ""],
       answerKey: q.answerKey || "A",
       imageUrl: q.imageUrl || "",
+      subQuestions: (q.subQuestions || []) as SubQuestionItem[],
     });
   }
 
@@ -572,17 +663,19 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     if (!editingQuestionId) return;
     try {
       const payload: {
-        type: "mcq" | "essay" | "section";
+        type: "mcq" | "essay" | "section" | "short_answer" | "true_false";
         content: string;
         choices?: string[];
         answerKey?: string | null;
         imageUrl: string | null;
+        subQuestions?: SubQuestionItem[] | null;
       } = {
         type: editQuestionForm.type,
         content: editQuestionForm.content,
         choices: editQuestionForm.type === "mcq" ? editQuestionForm.choices.filter(Boolean) : undefined,
-        answerKey: editQuestionForm.type === "mcq" ? editQuestionForm.answerKey : null,
+        answerKey: editQuestionForm.type === "mcq" || editQuestionForm.type === "short_answer" ? editQuestionForm.answerKey : null,
         imageUrl: editQuestionForm.imageUrl || null,
+        subQuestions: editQuestionForm.type === "true_false" ? editQuestionForm.subQuestions : null,
       };
 
       const res = await fetch(`/api/admin/questions/${editingQuestionId}`, {
@@ -732,12 +825,14 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
           type: "section",
           content: content.trim(),
           points: 0,
+          imageUrl: sectionImagePreview || undefined,
         }),
       });
 
       if (!res.ok) throw new Error("Thêm thông báo thất bại");
       
       setShowAddSectionForm(false);
+      setSectionImagePreview("");
       setToast({ message: "Thêm thông báo thành công", type: "success" });
       await loadData(assignmentId);
       (e.target as HTMLFormElement).reset();
@@ -746,6 +841,28 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       setToast({ message: "Không thể thêm thông báo", type: "error" });
     }
   }
+
+  const handleSectionPaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf("image") !== -1) {
+        e.preventDefault();
+        const file = items[i].getAsFile();
+        if (!file) continue;
+        setSectionUploading(true);
+        try {
+          const url = await uploadImage(file);
+          setSectionImagePreview(url);
+        } catch (error) {
+          console.error("Lỗi upload ảnh thông báo:", error);
+        } finally {
+          setSectionUploading(false);
+        }
+        break;
+      }
+    }
+  };
 
   // AI generation functions
   const addAiFiles = (incoming: File[]) => {
@@ -1106,7 +1223,83 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                   />
                   Ẩn bài
                 </label>
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700 ml-4">
+                  <input
+                    type="checkbox"
+                    checked={editForm.hideScore}
+                    onChange={(e) => setEditForm((p) => ({ ...p, hideScore: e.target.checked }))}
+                  />
+                  Ẩn điểm sau nộp bài
+                </label>
               </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-semibold text-slate-700">📊 Phân bổ điểm theo nhóm câu</p>
+                <button
+                  type="button"
+                  onClick={() => setEditForm(p => ({ ...p, pointRanges: [...p.pointRanges, { fromQuestion: 1, toQuestion: 10, totalPoints: 5 }] }))}
+                  className="rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 border border-blue-200"
+                >
+                  + Thêm nhóm
+                </button>
+              </div>
+              {editForm.pointRanges.length === 0 ? (
+                <p className="text-xs text-slate-500 text-center py-2">Chưa có nhóm câu. Nhấn &quot;Thêm nhóm&quot; để cấu hình điểm theo phạm vi câu hỏi.</p>
+              ) : (
+                <div className="space-y-2">
+                  {editForm.pointRanges.map((range, idx) => (
+                    <div key={idx} className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs text-slate-600 shrink-0">Câu</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={range.fromQuestion}
+                        onChange={(e) => setEditForm(p => {
+                          const updated = [...p.pointRanges];
+                          updated[idx] = { ...updated[idx], fromQuestion: parseInt(e.target.value) || 1 };
+                          return { ...p, pointRanges: updated };
+                        })}
+                        className="w-16 rounded border border-slate-300 px-2 py-1 text-sm text-center focus:border-blue-400 focus:outline-none"
+                      />
+                      <span className="text-xs text-slate-600 shrink-0">đến câu</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={range.toQuestion}
+                        onChange={(e) => setEditForm(p => {
+                          const updated = [...p.pointRanges];
+                          updated[idx] = { ...updated[idx], toQuestion: parseInt(e.target.value) || 1 };
+                          return { ...p, pointRanges: updated };
+                        })}
+                        className="w-16 rounded border border-slate-300 px-2 py-1 text-sm text-center focus:border-blue-400 focus:outline-none"
+                      />
+                      <span className="text-xs text-slate-600 shrink-0">=</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={range.totalPoints}
+                        onChange={(e) => setEditForm(p => {
+                          const updated = [...p.pointRanges];
+                          updated[idx] = { ...updated[idx], totalPoints: parseFloat(e.target.value) || 0 };
+                          return { ...p, pointRanges: updated };
+                        })}
+                        className="w-20 rounded border border-slate-300 px-2 py-1 text-sm text-center focus:border-blue-400 focus:outline-none"
+                      />
+                      <span className="text-xs text-slate-600 shrink-0">điểm</span>
+                      <button
+                        type="button"
+                        onClick={() => setEditForm(p => ({ ...p, pointRanges: p.pointRanges.filter((_, i) => i !== idx) }))}
+                        className="ml-auto text-red-400 hover:text-red-600 text-sm font-bold"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-3">
@@ -1791,17 +1984,17 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
               <select
                 name="type"
                 required
-                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                value={addFormType}
                 onChange={(e) => {
-                  const form = e.currentTarget.form;
-                  const choicesDiv = form?.querySelector("#choices-section");
-                  if (choicesDiv) {
-                    (choicesDiv as HTMLElement).style.display = e.target.value === "mcq" ? "block" : "none";
-                  }
+                  setAddFormType(e.target.value as "mcq" | "essay" | "short_answer" | "true_false");
+                  if (e.target.value === "true_false") setNewSubQuestions([]);
                 }}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
               >
                 <option value="mcq">Trắc nghiệm</option>
                 <option value="essay">Tự luận</option>
+                <option value="short_answer">Trả lời ngắn</option>
+                <option value="true_false">Đúng / Sai</option>
               </select>
             </div>
 
@@ -1853,32 +2046,109 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
               />
             </div>
 
-            <div id="choices-section">
-              <label className="block text-sm font-medium text-slate-700">Đáp án (trắc nghiệm)</label>
-              <div className="mt-1 space-y-2">
-                {[0, 1, 2, 3].map((i) => (
-                  <input
-                    key={i}
-                    type="text"
-                    name={`choice${i}`}
-                    placeholder={`Đáp án ${String.fromCharCode(65 + i)}`}
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
-                  />
-                ))}
+            {addFormType === "mcq" && (
+              <div id="choices-section">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-slate-700">Đáp án (trắc nghiệm)</label>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-slate-600">Số lựa chọn:</label>
+                    <select
+                      value={mcqChoiceCount}
+                      onChange={(e) => setMcqChoiceCount(Number(e.target.value))}
+                      className="rounded border border-slate-200 px-2 py-1 text-xs focus:border-slate-400 focus:outline-none"
+                    >
+                      {[2, 3, 4, 5, 6].map((n) => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="mt-1 space-y-2">
+                  {Array.from({ length: mcqChoiceCount }, (_, i) => (
+                    <input
+                      key={i}
+                      type="text"
+                      name={`choice${i}`}
+                      placeholder={`Đáp án ${String.fromCharCode(65 + i)}`}
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                    />
+                  ))}
+                </div>
+                <div className="mt-2">
+                  <label className="block text-sm font-medium text-slate-700">Đáp án đúng</label>
+                  <select
+                    name="answerKey"
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                  >
+                    {Array.from({ length: mcqChoiceCount }, (_, i) => (
+                      <option key={i} value={String.fromCharCode(65 + i)}>
+                        {String.fromCharCode(65 + i)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              <div className="mt-2">
+            )}
+
+            {addFormType === "short_answer" && (
+              <div>
                 <label className="block text-sm font-medium text-slate-700">Đáp án đúng</label>
-                <select
-                  name="answerKey"
+                <input
+                  type="text"
+                  name="shortAnswerKey"
+                  required
                   className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
-                >
-                  <option value="A">A</option>
-                  <option value="B">B</option>
-                  <option value="C">C</option>
-                  <option value="D">D</option>
-                </select>
+                  placeholder="Nhập đáp án đúng (không phân biệt hoa/thường)"
+                />
               </div>
-            </div>
+            )}
+
+            {addFormType === "true_false" && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-slate-700">Các ý đúng/sai</label>
+                  <button
+                    type="button"
+                    onClick={() => setNewSubQuestions((prev) => [...prev, { id: `new-${Date.now()}`, content: "", answerKey: "true", order: prev.length + 1 }])}
+                    className="rounded-lg bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+                  >
+                    + Thêm ý
+                  </button>
+                </div>
+                {newSubQuestions.length === 0 && (
+                  <p className="text-xs text-slate-500 italic">Chưa có ý nào. Nhấn &quot;+ Thêm ý&quot; để thêm.</p>
+                )}
+                <div className="space-y-2">
+                  {newSubQuestions.map((sq, i) => (
+                    <div key={sq.id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                      <span className="text-xs font-bold text-slate-500 w-5">{String.fromCharCode(97 + i)}.</span>
+                      <input
+                        type="text"
+                        value={sq.content}
+                        onChange={(e) => setNewSubQuestions((prev) => prev.map((s, j) => j === i ? { ...s, content: e.target.value } : s))}
+                        placeholder={`Nội dung ý ${String.fromCharCode(97 + i)}`}
+                        className="flex-1 rounded border border-slate-200 px-2 py-1 text-sm focus:outline-none focus:border-slate-400"
+                      />
+                      <select
+                        value={sq.answerKey}
+                        onChange={(e) => setNewSubQuestions((prev) => prev.map((s, j) => j === i ? { ...s, answerKey: e.target.value as "true" | "false" } : s))}
+                        className="rounded border border-slate-200 px-2 py-1 text-xs font-medium focus:outline-none"
+                      >
+                        <option value="true">Đúng</option>
+                        <option value="false">Sai</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setNewSubQuestions((prev) => prev.filter((_, j) => j !== i).map((s, j) => ({ ...s, order: j + 1 })))}
+                        className="text-red-500 hover:text-red-700 text-lg leading-none"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <p className="text-sm text-slate-600">Điểm sẽ được hệ thống chia đều theo tổng điểm bài tập.</p>
 
@@ -1899,11 +2169,27 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                 name="content"
                 rows={3}
                 required
+                onPaste={handleSectionPaste}
                 className="mt-2 w-full rounded-lg border border-amber-200 px-3 py-2 text-sm focus:border-amber-400 focus:outline-none"
-                placeholder="Nhập nội dung thông báo, ghi chú hoặc mục..."
+                placeholder="Nhập nội dung thông báo, ghi chú hoặc mục... (Ctrl+V để dán ảnh)"
               />
             </div>
-            <p className="text-xs text-amber-700">Thông báo sẽ hiển thị nổi bật trong bài tập và không tính điểm.</p>
+            {sectionUploading && (
+              <p className="text-xs text-amber-700">Đang tải ảnh lên...</p>
+            )}
+            {sectionImagePreview && (
+              <div className="relative inline-block">
+                <img src={sectionImagePreview} alt="Preview" className="max-h-40 rounded-lg border border-amber-200" />
+                <button
+                  type="button"
+                  onClick={() => setSectionImagePreview("")}
+                  className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs text-white hover:bg-red-600"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            <p className="text-xs text-amber-700">Thông báo sẽ hiển thị nổi bật trong bài tập và không tính điểm. Có thể dán ảnh bằng Ctrl+V vào ô nội dung.</p>
             <button
               type="submit"
               className="w-full rounded-lg bg-amber-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:shadow"
@@ -1919,7 +2205,9 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
               <p className="text-slate-600">Chưa có câu hỏi nào. Thêm câu hỏi đầu tiên!</p>
             </div>
           ) : (
-            questions.map((q, idx) => {
+            (() => {
+              let questionNum = 0;
+              return questions.map((q) => {
               // Render section/announcement differently
               if (q.type === "section") {
                 return (
@@ -1990,6 +2278,8 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
               }
 
               // Render normal question
+              questionNum++;
+              const currentNum = questionNum;
               return (
                 <div
                   key={q.id}
@@ -2009,7 +2299,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                     />
                     <div className="flex-1">
                       <p className="text-xs uppercase tracking-wide text-slate-500">
-                        Câu {idx + 1} · {q.type === "mcq" ? "Trắc nghiệm" : "Tự luận"} · {Number(q.points ?? 0).toFixed(3)} điểm
+                        Câu {currentNum} · {q.type === "mcq" ? "Trắc nghiệm" : q.type === "short_answer" ? "Trả lời ngắn" : q.type === "true_false" ? "Đúng/Sai" : "Tự luận"} · {Number(q.points ?? 0).toFixed(3)} điểm
                       </p>
                     {q.imageUrl && (
                       <div className="my-3 rounded-lg border border-slate-200 p-2">
@@ -2017,7 +2307,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                       </div>
                     )}
                     {q.content && <p className="mt-1 text-base font-medium text-slate-900">{q.content}</p>}
-                    {q.choices && (
+                    {q.type === "mcq" && q.choices && (
                       <div className="mt-2 space-y-1 text-sm text-slate-600">
                         {q.choices.map((c, ci) => (
                           <div key={ci}>
@@ -2025,6 +2315,22 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                             {q.answerKey === String.fromCharCode(65 + ci) && (
                               <span className="ml-2 text-emerald-600">✓</span>
                             )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {q.type === "short_answer" && q.answerKey && (
+                      <p className="mt-1 text-sm text-emerald-700">✓ Đáp án: <span className="font-semibold">{q.answerKey}</span></p>
+                    )}
+                    {q.type === "true_false" && q.subQuestions && q.subQuestions.length > 0 && (
+                      <div className="mt-2 space-y-1 text-sm text-slate-600">
+                        {q.subQuestions.map((sq, si) => (
+                          <div key={sq.id} className="flex items-center gap-2">
+                            <span className="font-semibold">{String.fromCharCode(97 + si)}.</span>
+                            <span>{sq.content}</span>
+                            <span className={`ml-2 text-xs font-semibold px-1.5 py-0.5 rounded ${sq.answerKey === "true" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
+                              {sq.answerKey === "true" ? "Đúng" : "Sai"}
+                            </span>
                           </div>
                         ))}
                       </div>
@@ -2056,10 +2362,12 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                         <select
                           className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
                           value={editQuestionForm.type}
-                          onChange={(e) => setEditQuestionForm((p) => ({ ...p, type: e.target.value as "mcq" | "essay" | "section" }))}
+                          onChange={(e) => setEditQuestionForm((p) => ({ ...p, type: e.target.value as "mcq" | "essay" | "section" | "short_answer" | "true_false" }))}
                         >
                           <option value="mcq">Trắc nghiệm</option>
                           <option value="essay">Tự luận</option>
+                          <option value="short_answer">Trả lời ngắn</option>
+                          <option value="true_false">Đúng / Sai</option>
                           <option value="section">Thông báo</option>
                         </select>
                       </div>
@@ -2111,6 +2419,63 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                       </div>
                     )}
 
+                    {editQuestionForm.type === "short_answer" && (
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700">Đáp án đúng</label>
+                        <input
+                          type="text"
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                          value={editQuestionForm.answerKey}
+                          onChange={(e) => setEditQuestionForm((p) => ({ ...p, answerKey: e.target.value }))}
+                          placeholder="Nhập đáp án đúng"
+                        />
+                      </div>
+                    )}
+
+                    {editQuestionForm.type === "true_false" && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-xs font-semibold text-slate-700">Các ý đúng/sai</label>
+                          <button
+                            type="button"
+                            onClick={() => setEditQuestionForm((p) => ({ ...p, subQuestions: [...p.subQuestions, { id: `new-${Date.now()}`, content: "", answerKey: "true", order: p.subQuestions.length + 1 }] }))}
+                            className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+                          >
+                            + Thêm ý
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {editQuestionForm.subQuestions.map((sq, i) => (
+                            <div key={sq.id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                              <span className="text-xs font-bold text-slate-500 w-5">{String.fromCharCode(97 + i)}.</span>
+                              <input
+                                type="text"
+                                value={sq.content}
+                                onChange={(e) => setEditQuestionForm((p) => ({ ...p, subQuestions: p.subQuestions.map((s, j) => j === i ? { ...s, content: e.target.value } : s) }))}
+                                placeholder={`Nội dung ý ${String.fromCharCode(97 + i)}`}
+                                className="flex-1 rounded border border-slate-200 px-2 py-1 text-sm focus:outline-none focus:border-slate-400"
+                              />
+                              <select
+                                value={sq.answerKey}
+                                onChange={(e) => setEditQuestionForm((p) => ({ ...p, subQuestions: p.subQuestions.map((s, j) => j === i ? { ...s, answerKey: e.target.value as "true" | "false" } : s) }))}
+                                className="rounded border border-slate-200 px-2 py-1 text-xs font-medium focus:outline-none"
+                              >
+                                <option value="true">Đúng</option>
+                                <option value="false">Sai</option>
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() => setEditQuestionForm((p) => ({ ...p, subQuestions: p.subQuestions.filter((_, j) => j !== i).map((s, j) => ({ ...s, order: j + 1 })) }))}
+                                className="text-red-500 hover:text-red-700 text-lg leading-none"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
@@ -2130,7 +2495,8 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                 )}
               </div>
               );
-            })
+            });
+            })()
           )}
         </div>
       </div>
@@ -2171,14 +2537,42 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                   </div>
                 )}
               </div>
-              <button
-                onClick={() => setShowStudentDetail(false)}
-                className="text-slate-400 hover:text-slate-600"
-              >
-                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-2">
+                {studentDetail?.status === "submitted" && studentDetail?.submissionId && (
+                  regradeMode ? (
+                    <>
+                      <button
+                        onClick={submitRegrade}
+                        disabled={savingRegrade}
+                        className="rounded-lg bg-green-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+                      >
+                        {savingRegrade ? "Đang lưu..." : "💾 Lưu điểm"}
+                      </button>
+                      <button
+                        onClick={() => { setRegradeMode(false); }}
+                        className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        Hủy
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => setRegradeMode(true)}
+                      className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-amber-600"
+                    >
+                      ✏️ Chấm lại
+                    </button>
+                  )
+                )}
+                <button
+                  onClick={() => { setShowStudentDetail(false); setRegradeMode(false); }}
+                  className="text-slate-400 hover:text-slate-600"
+                >
+                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             {loadingDetail ? (
@@ -2220,16 +2614,78 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                               Câu {q.order}
                             </span>
                             <span className="text-xs text-slate-600">
-                              {q.type === "mcq" ? "Trắc nghiệm" : "Tự luận"} · {q.points.toFixed(2)} điểm
+                              {q.type === "mcq" ? "Trắc nghiệm" : q.type === "essay" ? "Tự luận" : q.type === "short_answer" ? "Trả lời ngắn" : q.type === "true_false" ? "Đúng/Sai" : q.type} · {q.points.toFixed(2)} điểm
                             </span>
                           </div>
-                          <div>
-                            {isSubmitted && hasAnswer && (
-                              <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                                q.isCorrect ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
-                              }`}>
-                                {q.isCorrect ? "✓ Đúng" : "✗ Sai"}
-                              </span>
+                          <div className="flex items-center gap-2">
+                            {isSubmitted && regradeMode ? (
+                              q.type === "true_false" && q.subQuestions && q.subQuestions.length > 0 ? (
+                                <div className="space-y-1 text-right">
+                                  <span className="text-xs font-medium text-slate-600">Chấm từng ý:</span>
+                                  {q.subQuestions.map((sub, subIdx) => {
+                                    const subMap = regradeSubPointsMap.get(q.questionId) || new Map<string, number>();
+                                    const pointPerSub = q.points / q.subQuestions!.length;
+                                    const subVal = subMap.has(sub.id) ? subMap.get(sub.id)! : (() => {
+                                      try {
+                                        const ans = q.studentAnswer ? JSON.parse(q.studentAnswer) : {};
+                                        return (ans[sub.id] || "").toLowerCase() === (sub.answerKey || "").toLowerCase() ? pointPerSub : 0;
+                                      } catch { return 0; }
+                                    })();
+                                    return (
+                                      <div key={sub.id} className="flex items-center gap-1.5 justify-end">
+                                        <span className="text-xs text-slate-500 truncate max-w-[120px]">Ý {subIdx + 1}:</span>
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          max={pointPerSub}
+                                          step={0.25}
+                                          value={subVal}
+                                          onChange={(e) => {
+                                            const val = Math.min(pointPerSub, Math.max(0, parseFloat(e.target.value) || 0));
+                                            setRegradeSubPointsMap(prev => {
+                                              const next = new Map(prev);
+                                              const sub_ = new Map(next.get(q.questionId) || []);
+                                              sub_.set(sub.id, val);
+                                              next.set(q.questionId, sub_);
+                                              return next;
+                                            });
+                                          }}
+                                          className="w-16 rounded border border-slate-300 px-2 py-1 text-xs text-center focus:border-amber-400 focus:outline-none"
+                                        />
+                                        <span className="text-xs text-slate-500">/{pointPerSub.toFixed(2)}</span>
+                                      </div>
+                                    );
+                                  })}
+                                  <div className="text-xs text-slate-500 border-t border-slate-200 pt-1 mt-1">
+                                    Tổng: {Array.from((regradeSubPointsMap.get(q.questionId) || new Map<string, number>()).values()).reduce((a, b) => a + b, 0).toFixed(2)}/{q.points.toFixed(2)}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-xs text-slate-600">Điểm:</span>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={q.points}
+                                    step={0.25}
+                                    value={regradePointsMap.get(q.questionId) ?? q.pointsAwarded ?? 0}
+                                    onChange={(e) => {
+                                      const val = Math.min(q.points, Math.max(0, parseFloat(e.target.value) || 0));
+                                      setRegradePointsMap(prev => new Map(prev).set(q.questionId, val));
+                                    }}
+                                    className="w-20 rounded border border-slate-300 px-2 py-1 text-sm text-center focus:border-amber-400 focus:outline-none"
+                                  />
+                                  <span className="text-xs text-slate-600">/{q.points.toFixed(2)}</span>
+                                </div>
+                              )
+                            ) : (
+                              isSubmitted && hasAnswer && (
+                                <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                                  q.isCorrect ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+                                }`}>
+                                  {q.isCorrect ? "✓ Đúng" : "✗ Sai"}
+                                </span>
+                              )
                             )}
                             {!isSubmitted && hasAnswer && (
                               <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
@@ -2293,6 +2749,62 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                             </div>
                           </div>
                         )}
+
+                        {q.type === "short_answer" && (
+                          <div className="mt-3 space-y-2">
+                            <div>
+                              <p className="text-xs font-semibold text-slate-700 mb-1">Câu trả lời của học sinh:</p>
+                              <div className={`rounded border px-3 py-2 text-sm ${hasAnswer ? (q.isCorrect ? "border-emerald-400 bg-emerald-50 text-emerald-900" : "border-red-400 bg-red-50 text-red-900") : "border-slate-200 bg-slate-50 text-slate-400"}`}>
+                                {hasAnswer ? q.studentAnswer : <em>Chưa trả lời</em>}
+                                {hasAnswer && q.isCorrect && <span className="ml-2 font-semibold text-emerald-700">✓ Đúng</span>}
+                                {hasAnswer && !q.isCorrect && <span className="ml-2 font-semibold text-red-700">✗ Sai</span>}
+                              </div>
+                            </div>
+                            {q.correctAnswer && (
+                              <div className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                                <span className="font-semibold">Đáp án đúng:</span> {q.correctAnswer}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {q.type === "true_false" && q.subQuestions && q.subQuestions.length > 0 && (() => {
+                          let studentAnswers: Record<string, string> = {};
+                          try { studentAnswers = q.studentAnswer ? JSON.parse(q.studentAnswer) : {}; } catch { /* ok */ }
+                          return (
+                            <div className="mt-3 space-y-2">
+                              {q.subQuestions.map((sub, subIdx) => {
+                                const studentAns = (studentAnswers[sub.id] || "").toLowerCase();
+                                const correct = (sub.answerKey || "").toLowerCase();
+                                const answered = !!studentAns;
+                                const isSubCorrect = answered && studentAns === correct;
+                                const isSubWrong = answered && studentAns !== correct;
+                                return (
+                                  <div key={sub.id} className={`rounded-lg border px-3 py-2 text-sm ${isSubCorrect ? "border-emerald-300 bg-emerald-50" : isSubWrong ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"}`}>
+                                    <div className="flex items-start justify-between gap-2">
+                                      <span className="flex-1">
+                                        <span className="font-semibold mr-1">{String.fromCharCode(97 + subIdx)}.</span>
+                                        {sub.content}
+                                      </span>
+                                      <div className="flex items-center gap-2 shrink-0 text-xs">
+                                        {answered ? (
+                                          <span className={`font-semibold px-2 py-0.5 rounded-full ${isSubCorrect ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
+                                            {isSubCorrect ? "✓" : "✗"} {studentAns === "true" ? "Đúng" : "Sai"}
+                                          </span>
+                                        ) : (
+                                          <span className="text-slate-400 italic">Chưa trả lời</span>
+                                        )}
+                                        <span className={`px-2 py-0.5 rounded-full font-semibold ${correct === "true" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                                          Đáp án: {correct === "true" ? "Đúng" : "Sai"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
 
                         {!hasAnswer && (
                           <p className="text-sm text-slate-400 italic mt-2">Chưa trả lời câu này</p>

@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { assignmentId, studentName, sessionId, answers, durationSeconds } = body;
+    const { assignmentId, studentName, sessionId, answers, essayImages, durationSeconds } = body;
 
     if (!studentName) {
       return NextResponse.json({ error: "Student name is required" }, { status: 400 });
@@ -96,12 +96,29 @@ export async function POST(req: Request) {
         pointsAwarded = isCorrect ? Number(q.points || 1) : 0;
       }
 
+      // Chấm điểm trả lời ngắn (không phân biệt hoa/thường, trim khoảng trắng)
+      if (q.type === "short_answer" && q.answer_key) {
+        isCorrect = (studentAnswer || "").trim().toLowerCase() === q.answer_key.trim().toLowerCase();
+        pointsAwarded = isCorrect ? Number(q.points || 1) : 0;
+      }
+
+      // Chấm điểm đúng/sai (mỗi ý đúng được điểm tỉ lệ)
+      if (q.type === "true_false" && q.sub_questions) {
+        const subQs = q.sub_questions as Array<{ id: string; answerKey: string; content: string; order: number }>;
+        const studentTf = (() => { try { return JSON.parse(studentAnswer || "{}"); } catch { return {}; } })();
+        const correctCount = subQs.filter((sq) => studentTf[sq.id] === sq.answerKey).length;
+        const totalSubs = subQs.length;
+        pointsAwarded = totalSubs > 0 ? Math.round(((correctCount / totalSubs) * Number(q.points || 1)) * 1000) / 1000 : 0;
+        isCorrect = correctCount === totalSubs && totalSubs > 0;
+      }
+
       totalScoreRaw += pointsAwarded;
 
       await supabase.from("answers").insert({
         submission_id: submission.id,
         question_id: q.id,
         answer: studentAnswer || "",
+        answer_image_url: (essayImages as Record<string, string> | undefined)?.[q.id] || null,
         is_correct: q.type === "mcq" ? isCorrect : null,
         points_awarded: pointsAwarded,
       });

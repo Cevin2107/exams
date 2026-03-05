@@ -31,6 +31,8 @@ export async function GET(
         duration_minutes: assignment.durationMinutes,
         total_score: assignment.totalScore,
         is_hidden: assignment.isHidden ?? false,
+        hide_score: assignment.hideScore ?? false,
+        point_ranges: assignment.pointRanges ?? null,
       } : null,
       questions,
     });
@@ -62,6 +64,8 @@ export async function PATCH(
       durationMinutes: body.durationMinutes,
       totalScore: body.totalScore,
       isHidden: body.isHidden,
+      hideScore: body.hideScore,
+      pointRanges: body.pointRanges,
     });
 
     return NextResponse.json(updated);

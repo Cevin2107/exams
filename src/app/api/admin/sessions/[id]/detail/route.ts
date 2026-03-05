@@ -52,7 +52,7 @@ export async function GET(
     const draftAnswers = session.draft_answers || {};
 
     // Map câu hỏi với draft answers
-    const questionDetails = (questions || []).map((q: { id: string; order: number; type: string; content: string; choices?: string[]; answer_key?: string; points: number; image_url?: string }) => {
+    const questionDetails = (questions || []).map((q: { id: string; order: number; type: string; content: string; choices?: string[]; answer_key?: string; points: number; image_url?: string; sub_questions?: unknown }) => {
       const studentAnswer = draftAnswers[q.id] || null;
       const isCorrect = q.type === "mcq" && studentAnswer ? studentAnswer === q.answer_key : null;
       
@@ -65,6 +65,7 @@ export async function GET(
         answerKey: q.answer_key,
         points: q.points,
         imageUrl: q.image_url,
+        subQuestions: q.sub_questions || null,
         studentAnswer: studentAnswer,
         isCorrect: isCorrect,
       };

@@ -135,23 +135,35 @@ export default function StartAssignmentPage({ params }: { params: Promise<{ id: 
   };
 
   return (
-    <main className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
-        <div className="bg-white rounded-lg shadow-lg border border-slate-200 p-8">
-          <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-slate-900 mb-2">Bắt đầu bài tập</h1>
-            <p className="text-slate-600">Vui lòng nhập tên của bạn để tiếp tục</p>
-          </div>
+    <main className="min-h-screen bg-slate-100 flex items-center justify-center px-4">
+      {/* Background decoration */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div className="absolute -top-40 -right-40 h-96 w-96 rounded-full bg-indigo-100 opacity-50 blur-3xl" />
+        <div className="absolute -bottom-40 -left-40 h-96 w-96 rounded-full bg-violet-100 opacity-50 blur-3xl" />
+      </div>
 
-          <div className="space-y-4">
+      <div className="relative w-full max-w-md animate-slide-up">
+        {/* Logo */}
+        <div className="mb-6 flex flex-col items-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl brand-gradient shadow-lg mb-3">
+            <svg className="h-7 w-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+            </svg>
+          </div>
+          <h1 className="text-xl font-bold text-slate-900">Bắt đầu bài tập</h1>
+          <p className="text-sm text-slate-500 mt-0.5">Nhập tên để tiếp tục làm bài</p>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+          <div className="space-y-5">
             <div>
-              <label htmlFor="studentName" className="block text-sm font-medium text-slate-700 mb-2">
+              <label htmlFor="studentName" className="mb-1.5 block text-xs font-bold text-slate-700">
                 Họ và tên <span className="text-red-500">*</span>
               </label>
               <input
                 id="studentName"
                 type="text"
-                className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/20 text-slate-900"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 placeholder-slate-400 shadow-inner transition focus:border-indigo-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
                 placeholder="Ví dụ: Nguyễn Văn A"
                 value={studentName}
                 onChange={(e) => {
@@ -163,40 +175,47 @@ export default function StartAssignmentPage({ params }: { params: Promise<{ id: 
                 autoFocus
               />
               {error && (
-                <p className="mt-2 text-sm text-red-600">{error}</p>
+                <div className="mt-2 flex items-center gap-1.5 text-xs font-medium text-red-600">
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  {error}
+                </div>
               )}
               {checkingIncomplete && (
-                <p className="mt-2 text-sm text-slate-500">Đang kiểm tra...</p>
+                <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+                  <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Đang kiểm tra...
+                </div>
               )}
+
               {incompleteSession && !checkingIncomplete && (
-                <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                  <p className="text-sm font-medium text-amber-900 mb-2">
-                    ⚠️ Bạn có bài làm chưa hoàn thành
-                  </p>
-                  <p className="text-xs text-amber-700 mb-1">
-                    Học sinh: <span className="font-semibold">{incompleteSession.student_name}</span>
-                  </p>
-                  <p className="text-xs text-amber-700 mb-3">
-                    Bắt đầu lúc: {new Date(incompleteSession.started_at).toLocaleString("vi-VN")}
-                  </p>
-                  <div className="flex gap-2">
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <div className="flex items-start gap-2 mb-3">
+                    <svg className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <div>
+                      <p className="text-xs font-bold text-amber-900">Bài làm chưa hoàn thành</p>
+                      <p className="text-xs text-amber-700 mt-0.5">
+                        Bắt đầu lúc {new Date(incompleteSession.started_at).toLocaleString("vi-VN")}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       onClick={() => handleStart(incompleteSession.id)}
                       disabled={loading}
-                      className="flex-1 bg-amber-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-amber-700 transition disabled:bg-slate-300"
+                      className="rounded-xl bg-amber-600 py-2 text-xs font-bold text-white transition hover:bg-amber-700 disabled:opacity-50"
                     >
                       Tiếp tục làm
                     </button>
                     <button
                       onClick={async () => {
-                        console.log("Starting new assignment, clearing incomplete session");
-                        // Xóa session cũ
                         if (incompleteSession.id) {
                           try {
-                            await fetch(`/api/student-sessions/${incompleteSession.id}`, { 
-                              method: "DELETE" 
-                            });
-                            console.log("Old session deleted");
+                            await fetch(`/api/student-sessions/${incompleteSession.id}`, { method: "DELETE" });
                           } catch (err) {
                             console.error("Failed to delete old session:", err);
                           }
@@ -204,9 +223,9 @@ export default function StartAssignmentPage({ params }: { params: Promise<{ id: 
                         setIncompleteSession(null);
                       }}
                       disabled={loading}
-                      className="flex-1 bg-white text-slate-700 px-3 py-2 rounded-lg text-sm font-medium border border-slate-300 hover:bg-slate-50 transition disabled:bg-slate-100"
+                      className="rounded-xl border border-slate-200 bg-white py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
                     >
-                      Làm bài mới
+                      Làm mới
                     </button>
                   </div>
                 </div>
@@ -217,24 +236,32 @@ export default function StartAssignmentPage({ params }: { params: Promise<{ id: 
               <button
                 onClick={() => handleStart()}
                 disabled={loading || !studentName.trim() || checkingIncomplete}
-                className="w-full bg-slate-900 text-white py-3 rounded-lg font-semibold hover:bg-slate-800 transition disabled:bg-slate-300 disabled:cursor-not-allowed"
+                className="w-full rounded-xl py-3 text-sm font-bold text-white transition-all disabled:opacity-50 brand-gradient shadow-sm hover:opacity-90 hover:shadow-md"
               >
-                {loading ? "Đang tải..." : "Bắt đầu làm bài"}
+                {loading ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Đang tải...
+                  </span>
+                ) : "Bắt đầu làm bài →"}
               </button>
             )}
 
-            <Link 
+            <Link
               href="/"
-              className="block text-center text-sm text-slate-600 hover:text-slate-900 underline-offset-4 hover:underline"
+              className="block text-center text-sm text-slate-500 transition hover:text-indigo-600"
             >
               ← Quay lại trang chủ
             </Link>
           </div>
         </div>
 
-        <div className="mt-6 text-center text-sm text-slate-500">
-          <p>💡 Mẹo: Nhớ tên của bạn để xem kết quả sau này</p>
-        </div>
+        <p className="mt-5 text-center text-xs text-slate-400">
+          Nhớ đúng tên để xem lại kết quả bài làm nhé!
+        </p>
       </div>
     </main>
   );

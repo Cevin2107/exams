@@ -22,6 +22,8 @@ export default function NewAssignmentPage() {
   const [subjectCustom, setSubjectCustom] = useState("");
   const [gradeSelect, setGradeSelect] = useState<string>(GRADE_OPTIONS[0]);
   const [gradeCustom, setGradeCustom] = useState("");
+  const [hideScore, setHideScore] = useState(false);
+  const [pointRanges, setPointRanges] = useState<Array<{ fromQuestion: number; toQuestion: number; totalPoints: number }>>([]);
 
   const resolveSubjectAndGrade = () => {
     const resolvedSubject = subjectSelect === CUSTOM_VALUE ? subjectCustom.trim() : subjectSelect;
@@ -65,6 +67,8 @@ export default function NewAssignmentPage() {
       dueAt: dueAtISO,
       durationMinutes: parseInt(formData.get("durationMinutes") as string) || undefined,
       totalScore: parseFloat(formData.get("totalScore") as string) || 10,
+      hideScore,
+      pointRanges: pointRanges.length > 0 ? pointRanges : undefined,
     };
 
     try {
@@ -212,6 +216,90 @@ export default function NewAssignmentPage() {
                 className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
               />
             </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-700 mb-3">⚙️ Cài đặt hiển thị kết quả</p>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={hideScore}
+                onChange={(e) => setHideScore(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              <div>
+                <span className="text-sm font-medium text-slate-700">Ẩn điểm sau khi nộp bài</span>
+                <p className="text-xs text-slate-500 mt-0.5">Học sinh sẽ không thấy điểm ngay sau nộp bài. Giáo viên sẽ công bố điểm sau.</p>
+              </div>
+            </label>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-semibold text-slate-700">📊 Phân bổ điểm theo nhóm câu</p>
+              <button
+                type="button"
+                onClick={() => setPointRanges(p => [...p, { fromQuestion: 1, toQuestion: 10, totalPoints: 5 }])}
+                className="rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 border border-blue-200"
+              >
+                + Thêm nhóm
+              </button>
+            </div>
+            {pointRanges.length === 0 ? (
+              <p className="text-xs text-slate-500 text-center py-2">Chưa có nhóm câu. Nhấn &quot;Thêm nhóm&quot; để cấu hình điểm theo phạm vi câu hỏi.</p>
+            ) : (
+              <div className="space-y-2">
+                {pointRanges.map((range, idx) => (
+                  <div key={idx} className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-slate-600 shrink-0">Câu</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={range.fromQuestion}
+                      onChange={(e) => setPointRanges(p => {
+                        const updated = [...p];
+                        updated[idx] = { ...updated[idx], fromQuestion: parseInt(e.target.value) || 1 };
+                        return updated;
+                      })}
+                      className="w-16 rounded border border-slate-300 px-2 py-1 text-sm text-center focus:border-blue-400 focus:outline-none"
+                    />
+                    <span className="text-xs text-slate-600 shrink-0">đến câu</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={range.toQuestion}
+                      onChange={(e) => setPointRanges(p => {
+                        const updated = [...p];
+                        updated[idx] = { ...updated[idx], toQuestion: parseInt(e.target.value) || 1 };
+                        return updated;
+                      })}
+                      className="w-16 rounded border border-slate-300 px-2 py-1 text-sm text-center focus:border-blue-400 focus:outline-none"
+                    />
+                    <span className="text-xs text-slate-600 shrink-0">=</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.5}
+                      value={range.totalPoints}
+                      onChange={(e) => setPointRanges(p => {
+                        const updated = [...p];
+                        updated[idx] = { ...updated[idx], totalPoints: parseFloat(e.target.value) || 0 };
+                        return updated;
+                      })}
+                      className="w-20 rounded border border-slate-300 px-2 py-1 text-sm text-center focus:border-blue-400 focus:outline-none"
+                    />
+                    <span className="text-xs text-slate-600 shrink-0">điểm</span>
+                    <button
+                      type="button"
+                      onClick={() => setPointRanges(p => p.filter((_, i) => i !== idx))}
+                      className="ml-auto text-red-400 hover:text-red-600 text-sm font-bold"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <button

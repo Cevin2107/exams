@@ -106,6 +106,8 @@ export async function fetchAssignmentById(id: string): Promise<Assignment | null
     durationMinutes: data.duration_minutes,
     totalScore: data.total_score,
     isHidden: data.is_hidden,
+    hideScore: data.hide_score ?? false,
+    pointRanges: data.point_ranges ?? undefined,
     status: "not_started",
   };
 }
@@ -129,6 +131,8 @@ export async function fetchAssignmentByIdAdmin(id: string): Promise<Assignment |
     durationMinutes: data.duration_minutes,
     totalScore: data.total_score,
     isHidden: data.is_hidden,
+    hideScore: data.hide_score ?? false,
+    pointRanges: data.point_ranges ?? undefined,
     status: "not_started",
   };
 }
@@ -156,6 +160,7 @@ export async function fetchQuestions(assignmentId: string): Promise<Question[]> 
     answerKey: row.answer_key,
     points: row.points,
     imageUrl: row.image_url,
+    subQuestions: row.sub_questions || undefined,
   }));
 }
 
@@ -166,6 +171,8 @@ export async function createAssignment(assignment: {
   dueAt?: string;
   durationMinutes?: number;
   totalScore: number;
+  hideScore?: boolean;
+  pointRanges?: Array<{ fromQuestion: number; toQuestion: number; totalPoints: number }>;
 }) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
@@ -177,6 +184,8 @@ export async function createAssignment(assignment: {
       due_at: assignment.dueAt,
       duration_minutes: assignment.durationMinutes,
       total_score: assignment.totalScore,
+      hide_score: assignment.hideScore ?? false,
+      point_ranges: assignment.pointRanges ?? null,
     })
     .select()
     .single();
@@ -187,17 +196,18 @@ export async function createAssignment(assignment: {
 
 export async function createQuestion(question: {
   assignmentId: string;
-  type: "mcq" | "essay" | "section";
+  type: "mcq" | "essay" | "section" | "short_answer" | "true_false";
   content: string;
   choices?: string[];
   answerKey?: string;
   imageUrl?: string;
   points?: number;
+  subQuestions?: Array<{ id: string; content: string; answerKey: string; order: number }>;
 }) {
   const supabase = getSupabaseAdmin();
   const { data: assignment, error: assignmentError } = await supabase
     .from("assignments")
-    .select("total_score")
+    .select("total_score, point_ranges")
     .eq("id", question.assignmentId)
     .single();
 
@@ -232,6 +242,7 @@ export async function createQuestion(question: {
       answer_key: question.answerKey,
       points: question.points !== undefined ? question.points : perQuestionPoints,
       image_url: question.imageUrl,
+      sub_questions: question.subQuestions ? question.subQuestions : null,
     })
     .select()
     .single();
@@ -261,10 +272,12 @@ export async function updateAssignment(data: {
   durationMinutes?: number | null;
   totalScore?: number;
   isHidden?: boolean;
+  hideScore?: boolean;
+  pointRanges?: Array<{ fromQuestion: number; toQuestion: number; totalPoints: number }> | null;
 }) {
   const supabase = getSupabaseAdmin();
 
-  const updateBody: Record<string, string | number | boolean | null> = {};
+  const updateBody: Record<string, string | number | boolean | null | object> = {};
   if (data.title !== undefined) updateBody.title = data.title;
   if (data.subject !== undefined) updateBody.subject = data.subject;
   if (data.grade !== undefined) updateBody.grade = data.grade;
@@ -272,6 +285,8 @@ export async function updateAssignment(data: {
   if (data.durationMinutes !== undefined) updateBody.duration_minutes = data.durationMinutes;
   if (data.totalScore !== undefined) updateBody.total_score = data.totalScore;
   if (data.isHidden !== undefined) updateBody.is_hidden = data.isHidden;
+  if (data.hideScore !== undefined) updateBody.hide_score = data.hideScore;
+  if (data.pointRanges !== undefined) updateBody.point_ranges = data.pointRanges;
 
   const { data: updated, error } = await supabase
     .from("assignments")
@@ -282,7 +297,7 @@ export async function updateAssignment(data: {
 
   if (error) throw error;
 
-  if (data.totalScore !== undefined) {
+  if (data.totalScore !== undefined || data.pointRanges !== undefined) {
     await rebalanceQuestionPoints(data.id);
   }
 
@@ -293,28 +308,37 @@ export async function rebalanceQuestionPoints(assignmentId: string) {
   const supabase = getSupabaseAdmin();
 
   const [{ data: assignment, error: assignmentError }, { data: questions, error: questionError }] = await Promise.all([
-    supabase.from("assignments").select("total_score").eq("id", assignmentId).single(),
-    supabase.from("questions").select("id, type").eq("assignment_id", assignmentId),
+    supabase.from("assignments").select("total_score, point_ranges").eq("id", assignmentId).single(),
+    supabase.from("questions").select("id, type, order").eq("assignment_id", assignmentId).order("order", { ascending: true }),
   ]);
 
   if (assignmentError) throw assignmentError;
   if (questionError) throw questionError;
 
-  // Only count non-section questions
-  const actualQuestions = questions?.filter(q => q.type !== "section") ?? [];
+  const actualQuestions = (questions ?? []).filter(q => q.type !== "section");
   const count = actualQuestions.length;
   if (!assignment || count === 0) return;
 
-  const perQuestionPoints = Number(assignment.total_score || 0) / count;
-  
-  // Update only non-section questions
-  const { error: updateError } = await supabase
-    .from("questions")
-    .update({ points: perQuestionPoints })
-    .eq("assignment_id", assignmentId)
-    .neq("type", "section");
+  type RangeRow = { fromQuestion: number; toQuestion: number; totalPoints: number };
+  const ranges = assignment.point_ranges as RangeRow[] | null;
 
-  if (updateError) throw updateError;
+  if (ranges && ranges.length > 0) {
+    for (let i = 0; i < actualQuestions.length; i++) {
+      const qNum = i + 1;
+      const range = ranges.find(r => qNum >= r.fromQuestion && qNum <= r.toQuestion);
+      const rangeCount = range ? range.toQuestion - range.fromQuestion + 1 : 0;
+      const pts = range && rangeCount > 0 ? range.totalPoints / rangeCount : 0;
+      await supabase.from("questions").update({ points: pts }).eq("id", actualQuestions[i].id);
+    }
+  } else {
+    const perQuestionPoints = Number(assignment.total_score || 0) / count;
+    const { error: updateError } = await supabase
+      .from("questions")
+      .update({ points: perQuestionPoints })
+      .eq("assignment_id", assignmentId)
+      .neq("type", "section");
+    if (updateError) throw updateError;
+  }
 }
 
 export async function deleteAssignment(assignmentId: string) {
@@ -409,12 +433,13 @@ export async function deleteQuestion(questionId: string) {
 }
 
 export async function updateQuestion(questionId: string, data: {
-  type?: "mcq" | "essay" | "section";
+  type?: "mcq" | "essay" | "section" | "short_answer" | "true_false";
   content?: string;
   choices?: string[];
   answerKey?: string | null;
   imageUrl?: string | null;
   order?: number;
+  subQuestions?: Array<{ id: string; content: string; answerKey: string; order: number }> | null;
 }) {
   const supabase = getSupabaseAdmin();
 
@@ -434,13 +459,14 @@ export async function updateQuestion(questionId: string, data: {
     }
   }
 
-  const updateBody: Record<string, string | string[] | number | null> = {};
+  const updateBody: Record<string, string | string[] | number | null | object> = {};
   if (data.type !== undefined) updateBody.type = data.type;
   if (data.content !== undefined) updateBody.content = data.content;
   if (data.choices !== undefined) updateBody.choices = data.choices;
   if (data.answerKey !== undefined) updateBody.answer_key = data.answerKey;
   if (data.imageUrl !== undefined) updateBody.image_url = data.imageUrl;
   if (data.order !== undefined) updateBody.order = data.order;
+  if (data.subQuestions !== undefined) updateBody.sub_questions = data.subQuestions;
 
   const { data: question, error } = await supabase
     .from("questions")

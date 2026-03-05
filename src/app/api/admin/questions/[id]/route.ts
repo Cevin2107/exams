@@ -21,6 +21,7 @@ export async function PATCH(
       answerKey: body.answerKey,
       imageUrl: body.imageUrl,
       order: body.order,
+      subQuestions: body.subQuestions,
     });
     return NextResponse.json(updated);
   } catch (error) {

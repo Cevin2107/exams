@@ -59,7 +59,7 @@ export async function GET(
     if (answersError) throw answersError;
 
     // Map câu trả lời với câu hỏi
-    const questionDetails = (questions || []).map((q: { id: string; order: number; type: string; content: string; choices?: string[]; answer_key?: string; points: number; image_url?: string }) => {
+    const questionDetails = (questions || []).map((q: { id: string; order: number; type: string; content: string; choices?: string[]; answer_key?: string; points: number; image_url?: string; sub_questions?: unknown }) => {
       const answer = (answers || []).find((a: { question_id: string; answer?: string; is_correct?: boolean; points_awarded?: number }) => a.question_id === q.id);
       return {
         questionId: q.id,
@@ -70,6 +70,7 @@ export async function GET(
         answerKey: q.answer_key,
         points: q.points,
         imageUrl: q.image_url,
+        subQuestions: q.sub_questions || null,
         studentAnswer: answer?.answer || null,
         isCorrect: answer?.is_correct,
         pointsAwarded: answer?.points_awarded || 0,
