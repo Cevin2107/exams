@@ -85,6 +85,11 @@ export async function PUT(req: Request) {
       .eq("id", sessionId)
       .single();
 
+    // Không cho phép chuyển trạng thái từ "submitted" sang bất kỳ trạng thái nào khác
+    if (currentSession?.status === "submitted") {
+      return NextResponse.json({ success: true, skipped: true });
+    }
+
     const updateData: {
       status: string;
       last_activity_at: string;

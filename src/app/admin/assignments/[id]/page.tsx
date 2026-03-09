@@ -133,6 +133,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const [showStudentDetail, setShowStudentDetail] = useState(false);
   const [studentDetail, setStudentDetail] = useState<StudentDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [currentViewedSession, setCurrentViewedSession] = useState<StudentSession | null>(null);
   const [regradePointsMap, setRegradePointsMap] = useState<Map<string, number>>(new Map());
   const [regradeSubPointsMap, setRegradeSubPointsMap] = useState<Map<string, Map<string, number>>>(new Map());
   const [regradeMode, setRegradeMode] = useState(false);
@@ -353,10 +354,64 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     }
   }
 
+  // Auto-refresh chi tiết học sinh mỗi 5 giây khi panel đang mở và học sinh chưa nộp
+  useEffect(() => {
+    if (!showStudentDetail || !currentViewedSession) return;
+    if (currentViewedSession.submissions?.id) return; // Đã nộp, không cần refresh
+
+    const interval = setInterval(async () => {
+      // Cập nhật session list để lấy status mới nhất
+      const updatedRes = await fetch(`/api/student-sessions?assignmentId=${assignmentId}`);
+      if (!updatedRes.ok) return;
+      const updatedData = await updatedRes.json();
+      const updatedSessions: StudentSession[] = updatedData.sessions || [];
+      setStudentSessions(updatedSessions);
+
+      // Tìm session hiện tại với dữ liệu mới nhất
+      const latestSession = updatedSessions.find(s => s.id === currentViewedSession.id);
+      if (!latestSession) return;
+
+      // Cập nhật header status
+      setCurrentViewedSession(latestSession);
+
+      // Nếu học sinh đã nộp bài, reload lại detail đầy đủ
+      if (latestSession.submissions?.id) {
+        await loadStudentDetail(latestSession);
+        return;
+      }
+
+      // Học sinh chưa nộp, refresh silent draft answers
+      try {
+        const res = await fetch(`/api/admin/sessions/${latestSession.id}/detail`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const draftAnswers = data.draft_answers || {};
+        const answeredCount = Object.keys(draftAnswers).filter(k => draftAnswers[k]).length;
+
+        setStudentDetail(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            status: latestSession.status,
+            answeredCount,
+            questions: prev.questions.map(q => ({
+              ...q,
+              studentAnswer: draftAnswers[q.questionId] ?? q.studentAnswer,
+            })),
+          };
+        });
+      } catch { /* silent fail */ }
+    }, 5000); // 5 giây
+
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showStudentDetail, currentViewedSession, assignmentId]);
+
   async function loadStudentDetail(session: StudentSession) {
     try {
       setLoadingDetail(true);
       setShowStudentDetail(true);
+      setCurrentViewedSession(session);
 
       // Nếu đã nộp bài, load từ submission
       if (session.submissions && session.submissions.id) {
@@ -2577,13 +2632,21 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
 
       {/* Modal chi tiết học sinh */}
       {showStudentDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowStudentDetail(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => { setShowStudentDetail(false); setCurrentViewedSession(null); }}>
           <div className="relative max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
               <div>
-                <h3 className="text-xl font-bold text-slate-900">
-                  Chi tiết bài làm - {studentDetail?.studentName}
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xl font-bold text-slate-900">
+                    Chi tiết bài làm - {studentDetail?.studentName}
+                  </h3>
+                  {studentDetail && studentDetail.status !== "submitted" && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
+                      <span className="inline-flex h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
+                      Tự động cập nhật
+                    </span>
+                  )}
+                </div>
                 {studentDetail && (
                   <div className="mt-1 flex items-center gap-3 text-sm">
                     <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
@@ -2639,7 +2702,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                   )
                 )}
                 <button
-                  onClick={() => { setShowStudentDetail(false); setRegradeMode(false); }}
+                  onClick={() => { setShowStudentDetail(false); setRegradeMode(false); setCurrentViewedSession(null); }}
                   className="text-slate-400 hover:text-slate-600"
                 >
                   <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">

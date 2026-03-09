@@ -86,6 +86,14 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
     setStudentName(savedName);
     setSessionId(savedSessionId);
 
+    // Khôi phục trạng thái "active" khi học sinh mở lại trang bài làm
+    // (xử lý trường hợp trước đó bị đánh dấu "exited" do đóng tab/trình duyệt)
+    fetch("/api/student-sessions", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: savedSessionId, status: "active" }),
+    }).catch(err => console.error("Failed to restore active status:", err));
+
     // Lấy deadline từ server
     fetch(`/api/student-sessions/check-deadline?sessionId=${savedSessionId}`)
       .then(res => res.json())
