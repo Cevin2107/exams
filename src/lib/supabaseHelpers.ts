@@ -277,6 +277,17 @@ export async function updateAssignment(data: {
 }) {
   const supabase = getSupabaseAdmin();
 
+  // Nếu duration_minutes thay đổi, lưu giá trị cũ để tính delta
+  let oldDurationMinutes: number | null = null;
+  if (data.durationMinutes !== undefined) {
+    const { data: assignment } = await supabase
+      .from("assignments")
+      .select("duration_minutes")
+      .eq("id", data.id)
+      .single();
+    oldDurationMinutes = assignment?.duration_minutes ?? null;
+  }
+
   const updateBody: Record<string, string | number | boolean | null | object> = {};
   if (data.title !== undefined) updateBody.title = data.title;
   if (data.subject !== undefined) updateBody.subject = data.subject;
@@ -297,6 +308,37 @@ export async function updateAssignment(data: {
 
   if (error) throw error;
 
+  // Nếu duration_minutes thay đổi, cập nhật deadline_at của các session đang active
+  if (
+    data.durationMinutes !== undefined &&
+    data.durationMinutes !== null &&
+    oldDurationMinutes !== null &&
+    data.durationMinutes !== oldDurationMinutes
+  ) {
+    const deltaMinutes = data.durationMinutes - oldDurationMinutes;
+    const deltaMs = deltaMinutes * 60 * 1000;
+
+    // Lấy tất cả sessions đang active (chưa nộp bài) có deadline
+    const { data: sessions } = await supabase
+      .from("student_sessions")
+      .select("id, deadline_at")
+      .eq("assignment_id", data.id)
+      .neq("status", "submitted")
+      .not("deadline_at", "is", null);
+
+    if (sessions && sessions.length > 0) {
+      // Cập nhật deadline_at của từng session
+      for (const session of sessions) {
+        const newDeadline = new Date(new Date(session.deadline_at).getTime() + deltaMs).toISOString();
+        await supabase
+          .from("student_sessions")
+          .update({ deadline_at: newDeadline })
+          .eq("id", session.id);
+      }
+      console.log(`⏱️ Updated deadline for ${sessions.length} active sessions (${deltaMinutes > 0 ? '+' : ''}${deltaMinutes} minutes)`);
+    }
+  }
+
   if (data.totalScore !== undefined || data.pointRanges !== undefined) {
     await rebalanceQuestionPoints(data.id);
   }
@@ -315,7 +357,7 @@ export async function rebalanceQuestionPoints(assignmentId: string) {
   if (assignmentError) throw assignmentError;
   if (questionError) throw questionError;
 
-  const actualQuestions = (questions ?? []).filter(q => q.type !== "section");
+  const actualQuestions = (questions ?? []).filter((q) => q.type !== "section");
   const count = actualQuestions.length;
   if (!assignment || count === 0) return;
 
@@ -437,6 +479,7 @@ export async function updateQuestion(questionId: string, data: {
   content?: string;
   choices?: string[];
   answerKey?: string | null;
+  points?: number;
   imageUrl?: string | null;
   order?: number;
   subQuestions?: Array<{ id: string; content: string; answerKey: string; order: number }> | null;
@@ -464,6 +507,7 @@ export async function updateQuestion(questionId: string, data: {
   if (data.content !== undefined) updateBody.content = data.content;
   if (data.choices !== undefined) updateBody.choices = data.choices;
   if (data.answerKey !== undefined) updateBody.answer_key = data.answerKey;
+  if (data.points !== undefined) updateBody.points = data.points;
   if (data.imageUrl !== undefined) updateBody.image_url = data.imageUrl;
   if (data.order !== undefined) updateBody.order = data.order;
   if (data.subQuestions !== undefined) updateBody.sub_questions = data.subQuestions;
@@ -592,9 +636,11 @@ export async function fetchAllStudentsStats() {
     .from("student_sessions")
     .select(`
       id,
+      status,
       student_name,
       assignment_id,
       started_at,
+      last_activity_at,
       draft_answers,
       assignments!inner (
         id,
@@ -625,11 +671,13 @@ export async function fetchAllStudentsStats() {
     }>;
     inProgress: Array<{
       sessionId: string;
+      status: "active" | "exited";
       assignmentId: string;
       assignmentTitle: string;
       subject: string;
       grade: string;
       startedAt: string;
+      lastActivityAt?: string;
       questionsAnswered: number;
       draftAnswers: Record<string, string>;
     }>;
@@ -673,9 +721,11 @@ export async function fetchAllStudentsStats() {
   // Thêm sessions đang làm dở
   type SessionRow = {
     id: string;
+    status: "active" | "exited";
     student_name: string;
     assignment_id: string;
     started_at: string;
+    last_activity_at?: string;
     draft_answers?: Record<string, string>;
     assignments: { id?: string; title?: string; subject?: string; grade?: string };
   };
@@ -697,11 +747,13 @@ export async function fetchAllStudentsStats() {
     const draftAnswers = session.draft_answers || {};
     student.inProgress.push({
       sessionId: session.id,
+      status: session.status,
       assignmentId: session.assignment_id,
       assignmentTitle: session.assignments?.title || "N/A",
       subject: session.assignments?.subject || "N/A",
       grade: session.assignments?.grade || "N/A",
       startedAt: session.started_at,
+      lastActivityAt: session.last_activity_at,
       questionsAnswered: Object.keys(draftAnswers).length,
       draftAnswers: draftAnswers,
     });

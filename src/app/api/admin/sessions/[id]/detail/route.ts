@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkAdminAuth } from "@/lib/adminAuth";
 import { createClient } from "@supabase/supabase-js";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -62,12 +65,13 @@ export async function GET(
         type: q.type,
         content: q.content,
         choices: q.choices,
-        answerKey: q.answer_key,
+        correctAnswer: q.answer_key,
         points: q.points,
         imageUrl: q.image_url,
         subQuestions: q.sub_questions || null,
         studentAnswer: studentAnswer,
         isCorrect: isCorrect,
+        pointsAwarded: 0,
       };
     });
 

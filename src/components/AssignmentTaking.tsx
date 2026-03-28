@@ -4,6 +4,13 @@ import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import clsx from "clsx";
 import { useRouter } from "next/navigation";
 import { Assignment, Question } from "@/lib/types";
+import { getActualQuestions } from "@/lib/utils";
+import { TabSwitchWarning } from "@/components/TabSwitchWarning";
+import { AutoSaveIndicator } from "@/components/AutoSaveIndicator";
+import { Clock, Moon, Sun } from "lucide-react";
+import { createClient } from "@supabase/supabase-js";
+import { AssignmentQuestion } from "@/components/AssignmentQuestion";
+import { useTheme } from "@/providers/ThemeProvider";
 
 interface Props {
   assignment: Assignment;
@@ -21,7 +28,6 @@ const formatClock = (seconds: number) => {
 };
 
 const formatVietnamTime = (date: Date) => {
-  // Chuyển sang múi giờ Việt Nam (UTC+7)
   const options: Intl.DateTimeFormatOptions = {
     timeZone: 'Asia/Ho_Chi_Minh',
     hour: '2-digit',
@@ -37,48 +43,33 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
   const [studentName, setStudentName] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const hasTimer = Boolean(assignment.durationMinutes);
-  const initialSeconds = hasTimer ? (assignment.durationMinutes ?? 0) * 60 : 0;
-  const [remaining, setRemaining] = useState(initialSeconds);
+  const [remaining, setRemaining] = useState(hasTimer ? (assignment.durationMinutes ?? 0) * 60 : 0);
   const [currentVietnamTime, setCurrentVietnamTime] = useState(new Date());
   const [serverDeadline, setServerDeadline] = useState<Date | null>(null);
   const [questions, setQuestions] = useState<Question[]>(initialQuestions);
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [essayImages, setEssayImages] = useState<Record<string, string>>({}); // questionId -> uploaded image URL
+  const [essayImages, setEssayImages] = useState<Record<string, string>>({});
   const [essayImageUploading, setEssayImageUploading] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [startTime] = useState(Date.now());
   const draftKey = useMemo(() => `assignment-draft-${assignment.id}`, [assignment.id]);
   const hasAutoSubmitted = useRef(false);
-
-  // Log initial questions để debug
-  useEffect(() => {
-    console.log("📸 Initial questions with images:", initialQuestions.map(q => ({
-      id: q.id,
-      content: q.content?.substring(0, 30),
-      imageUrl: q.imageUrl
-    })));
-  }, [initialQuestions]);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
+  const [lastSaveTime, setLastSaveTime] = useState<number | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const { theme, toggleTheme } = useTheme();
 
-  // Mount flag để tránh hydration mismatch
+  const isDark = theme === "dark";
+
   useEffect(() => {
     setIsMounted(true);
-  }, []);
-
-  // Kiểm tra xem học sinh đã nhập tên chưa và lấy deadline từ server
-  useEffect(() => {
     if (typeof window === "undefined") return;
-    
     const savedName = localStorage.getItem(`student-name-${assignment.id}`);
     const savedSessionId = localStorage.getItem(`session-${assignment.id}`);
     
-    console.log("Checking session - savedName:", savedName, "savedSessionId:", savedSessionId);
-    
     if (!savedName || !savedSessionId) {
-      // Chưa nhập tên, chuyển đến trang start
-      console.log("No session found, redirecting to start page");
       router.push(`/assignments/${assignment.id}/start`);
       return;
     }
@@ -86,37 +77,27 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
     setStudentName(savedName);
     setSessionId(savedSessionId);
 
-    // Khôi phục trạng thái "active" khi học sinh mở lại trang bài làm
-    // (xử lý trường hợp trước đó bị đánh dấu "exited" do đóng tab/trình duyệt)
     fetch("/api/student-sessions", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionId: savedSessionId, status: "active" }),
-    }).catch(err => console.error("Failed to restore active status:", err));
+    }).catch(err => console.error(err));
 
-    // Lấy deadline từ server
     fetch(`/api/student-sessions/check-deadline?sessionId=${savedSessionId}`)
       .then(res => res.json())
       .then(data => {
-        if (data.deadlineAt) {
-          setServerDeadline(new Date(data.deadlineAt));
-        }
+        if (data.deadlineAt) setServerDeadline(new Date(data.deadlineAt));
       })
-      .catch(err => console.error("Failed to fetch deadline:", err));
+      .catch(err => console.error(err));
   }, [assignment.id, router]);
 
-  // Cập nhật đồng hồ thời gian thực Việt Nam
   useEffect(() => {
-    const id = setInterval(() => {
-      setCurrentVietnamTime(new Date());
-    }, 1000);
+    const id = setInterval(() => setCurrentVietnamTime(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
 
-  // Polling deadline từ server mỗi 15 giây để tự động cập nhật khi admin gia hạn
   useEffect(() => {
     if (!sessionId || submitting || hasSubmitted) return;
-
     const fetchDeadline = async () => {
       try {
         const res = await fetch(`/api/student-sessions/check-deadline?sessionId=${sessionId}`);
@@ -124,220 +105,155 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
         const data = await res.json();
         if (data.deadlineAt) {
           setServerDeadline(prev => {
-            const newDeadline = new Date(data.deadlineAt);
-            // Chỉ cập nhật nếu deadline mới khác deadline cũ (admin đã gia hạn)
-            if (!prev || Math.abs(newDeadline.getTime() - prev.getTime()) > 1000) {
-              return newDeadline;
-            }
+            const newD = new Date(data.deadlineAt);
+            if (!prev || Math.abs(newD.getTime() - prev.getTime()) > 1000) return newD;
             return prev;
           });
         }
-      } catch (err) {
-        console.error("Failed to poll deadline:", err);
-      }
+      } catch (err) { }
     };
-
     const id = setInterval(fetchDeadline, 15000);
     return () => clearInterval(id);
   }, [sessionId, submitting, hasSubmitted]);
 
-  // Tính thời gian còn lại dựa trên server deadline
+  useEffect(() => {
+    if (!sessionId || submitting || hasSubmitted) return;
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    const supabase = createClient(supabaseUrl, supabaseAnonKey);
+    const channel = supabase
+      .channel(`assignment-${assignment.id}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'assignments', filter: `id=eq.${assignment.id}` }, async (payload: any) => {
+        if (payload.new.duration_minutes !== undefined) {
+          try {
+            const res = await fetch(`/api/student-sessions/check-deadline?sessionId=${sessionId}`);
+            if (res.ok) {
+              const data = await res.json();
+              if (data.deadlineAt) setServerDeadline(new Date(data.deadlineAt));
+            }
+          } catch (err) {}
+        }
+      }).subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [assignment.id, sessionId, submitting, hasSubmitted]);
+
   useEffect(() => {
     if (!serverDeadline) return;
-    
     const id = setInterval(() => {
-      const now = new Date();
-      const remainingMs = serverDeadline.getTime() - now.getTime();
-      const remainingSec = Math.max(0, Math.floor(remainingMs / 1000));
-      setRemaining(remainingSec);
+      const remainingMs = serverDeadline.getTime() - Date.now();
+      setRemaining(Math.max(0, Math.floor(remainingMs / 1000)));
     }, 1000);
-    
     return () => clearInterval(id);
   }, [serverDeadline]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !sessionId) return;
-    
-    // Load draft từ database thay vì localStorage
     const loadDraft = async () => {
       try {
-        console.log("Loading draft from database for session:", sessionId);
         const res = await fetch(`/api/student-sessions/${sessionId}/draft`);
         if (res.ok) {
           const data = await res.json();
           if (data.draftAnswers && Object.keys(data.draftAnswers).length > 0) {
-            console.log("Loaded answers from database:", data.draftAnswers);
             setAnswers(data.draftAnswers);
-          } else {
-            console.log("No draft found in database");
           }
         }
       } catch (err) {
-        console.warn("Không thể tải nháp từ database", err);
-        // Fallback: thử load từ localStorage
         try {
           const saved = localStorage.getItem(draftKey);
           if (saved) {
-            const parsed = JSON.parse(saved) as { answers: Record<string, string> };
-            if (parsed?.answers) {
-              console.log("Loaded answers from localStorage fallback:", parsed.answers);
-              setAnswers(parsed.answers);
-            }
+            const parsed = JSON.parse(saved);
+            if (parsed?.answers) setAnswers(parsed.answers);
           }
-        } catch (localErr) {
-          console.warn("Không thể tải nháp từ localStorage", localErr);
-        }
+        } catch (localErr) {}
       }
     };
-    
     loadDraft();
-  }, [sessionId, draftKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, draftKey]);
 
-  // Lưu draft vào database thay vì localStorage
   useEffect(() => {
     if (typeof window === "undefined" || !sessionId) return;
-    
     const saveDraft = async () => {
       try {
-        console.log("Saving draft to database, session:", sessionId, "answers:", answers);
+        setIsSaving(true);
         await fetch(`/api/student-sessions/${sessionId}/draft`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ draftAnswers: answers }),
         });
-        // Backup vào localStorage
         localStorage.setItem(draftKey, JSON.stringify({ answers }));
+        setLastSaveTime(Date.now());
       } catch (err) {
-        console.warn("Không thể lưu nháp vào database, fallback to localStorage", err);
         try {
           localStorage.setItem(draftKey, JSON.stringify({ answers }));
-        } catch (localErr) {
-          console.warn("Không thể lưu nháp", localErr);
-        }
+          setLastSaveTime(Date.now());
+        } catch (localErr) {}
+      } finally {
+        setIsSaving(false);
       }
     };
-
-    const timeoutId = setTimeout(saveDraft, 500); // Debounce 500ms
-    return () => clearTimeout(timeoutId);
+    const id = setTimeout(saveDraft, 500);
+    return () => clearTimeout(id);
   }, [answers, sessionId, draftKey]);
 
-  // Polling: Tự động cập nhật câu hỏi mỗi 3 giây
   useEffect(() => {
     if (!sessionId || submitting || hasSubmitted) return;
-
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    const supabase = createClient(supabaseUrl, supabaseAnonKey);
     const fetchQuestions = async () => {
       try {
         const res = await fetch(`/api/assignments/${assignment.id}/questions`);
-        if (!res.ok) {
-          console.warn(`Failed to fetch questions: ${res.status}`);
-          return;
-        }
-        
+        if (!res.ok) return;
         const data = await res.json();
-        const newQuestions = data.questions as Question[];
+        const newQs = data.questions as Question[];
+        if (!newQs || !Array.isArray(newQs)) return;
         
-        if (!newQuestions || !Array.isArray(newQuestions)) {
-          console.warn("Invalid questions data received");
-          return;
-        }
-        
-        // Chỉ update nếu có thay đổi (số lượng hoặc nội dung)
-        if (newQuestions.length !== questions.length) {
-          console.log(`📝 Cập nhật: ${Math.abs(newQuestions.length - questions.length)} câu hỏi ${newQuestions.length > questions.length ? 'mới' : 'đã xóa'}`);
-          setQuestions(newQuestions);
-        } else if (newQuestions.length > 0) {
-          // Kiểm tra từng câu hỏi có thay đổi không
-          const updatedQuestions = questions.map((oldQ, idx) => {
-            const newQ = newQuestions.find(q => q.id === oldQ.id);
-            if (!newQ) return oldQ; // Giữ nguyên nếu không tìm thấy
-            
-            // So sánh các trường quan trọng
-            const hasContentChange = newQ.content !== oldQ.content;
-            const hasChoicesChange = JSON.stringify(newQ.choices || []) !== JSON.stringify(oldQ.choices || []);
-            const hasImageChange = (newQ.imageUrl || '') !== (oldQ.imageUrl || '');
-            
-            // Nếu có thay đổi, dùng câu hỏi mới, nhưng bảo toàn imageUrl nếu mới bị null
-            if (hasContentChange || hasChoicesChange || hasImageChange) {
-              // Nếu imageUrl mới là null/undefined nhưng cũ có giá trị, giữ lại giá trị cũ
-              if (!newQ.imageUrl && oldQ.imageUrl) {
-                console.log(`⚠️ Giữ lại ảnh cho câu ${idx + 1}: ${oldQ.imageUrl}`);
-                return { ...newQ, imageUrl: oldQ.imageUrl };
-              }
+        if (newQs.length !== questions.length) {
+          setQuestions(newQs);
+        } else if (newQs.length > 0) {
+          const updated = questions.map(oldQ => {
+            const newQ = newQs.find(q => q.id === oldQ.id);
+            if (!newQ) return oldQ;
+            const hasChange = newQ.content !== oldQ.content || JSON.stringify(newQ.choices) !== JSON.stringify(oldQ.choices) || (newQ.imageUrl || '') !== (oldQ.imageUrl || '');
+            if (hasChange) {
+              if (!newQ.imageUrl && oldQ.imageUrl) return { ...newQ, imageUrl: oldQ.imageUrl };
               return newQ;
             }
-            
-            return oldQ; // Không thay đổi gì
+            return oldQ;
           });
-          
-          // Kiểm tra có thay đổi thực sự không
-          const hasRealChanges = updatedQuestions.some((q, idx) => q !== questions[idx]);
-          if (hasRealChanges) {
-            console.log("📝 Cập nhật: Nội dung câu hỏi đã thay đổi");
-            setQuestions(updatedQuestions);
-          }
+          if (updated.some((q, i) => q !== questions[i])) setQuestions(updated);
         }
-      } catch (err) {
-        console.error("Error fetching questions:", err);
-      }
+      } catch (err) {}
     };
-
-    // KHÔNG fetch ngay lần đầu, chỉ bắt đầu polling sau 3 giây
-    // Vì initialQuestions đã có đầy đủ dữ liệu từ server
-    const intervalId = setInterval(fetchQuestions, 3000);
-    
-    return () => clearInterval(intervalId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const c = supabase.channel(`questions-${assignment.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'questions', filter: `assignment_id=eq.${assignment.id}` }, fetchQuestions).subscribe();
+    return () => { supabase.removeChannel(c); };
   }, [assignment.id, sessionId, questions.length, submitting, hasSubmitted]);
 
   const timeUp = hasTimer && remaining === 0;
   const locked = timeUp;
   const answeredCount = useMemo(() => Object.keys(answers).length, [answers]);
-  const nonSectionQuestions = useMemo(() => questions.filter(q => q.type !== 'section'), [questions]);
+  const nonSectionQuestions = useMemo(() => getActualQuestions(questions), [questions]);
 
   const handleSubmit = useCallback(async (isAutoSubmit = false) => {
     if (submitting || (locked && !isAutoSubmit)) return;
-    if (!studentName || !sessionId) {
-      console.error("Missing studentName or sessionId:", { studentName, sessionId });
-      return;
-    }
-
+    if (!studentName || !sessionId) return;
     setSubmitting(true);
     setHasSubmitted(true);
     try {
       const durationSeconds = Math.floor((Date.now() - startTime) / 1000);
-      console.log("Submitting with sessionId:", sessionId);
       const res = await fetch("/api/submissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          assignmentId: assignment.id,
-          studentName,
-          sessionId,
-          answers,
-          essayImages,
-          durationSeconds,
-        }),
+        body: JSON.stringify({ assignmentId: assignment.id, studentName, sessionId, answers, essayImages, durationSeconds }),
       });
-
       const data = await res.json();
       if (res.ok) {
-        try {
-          localStorage.removeItem(draftKey);
-        } catch (err) {
-          console.warn("Không thể xóa nháp", err);
-        }
+        try { localStorage.removeItem(draftKey); } catch (err) {}
         window.location.href = `/assignments/${assignment.id}/result?sid=${data.submissionId}`;
-      } else {
-        console.error("Lỗi nộp bài:", data.error);
-        setSubmitting(false);
-      }
-    } catch (error) {
-      console.error("Lỗi kết nối:", error);
-      setSubmitting(false);
-    }
+      } else setSubmitting(false);
+    } catch (err) { setSubmitting(false); }
   }, [assignment.id, studentName, sessionId, answers, essayImages, startTime, draftKey, locked, submitting]);
 
-  // Tự động nộp bài khi hết giờ
   useEffect(() => {
     if (timeUp && !hasAutoSubmitted.current && !submitting && studentName) {
       hasAutoSubmitted.current = true;
@@ -345,110 +261,61 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
     }
   }, [timeUp, submitting, studentName, handleSubmit]);
 
-  // Cập nhật trạng thái session khi rời trang hoặc chuyển tab
   useEffect(() => {
     if (!sessionId || !studentName) return;
-
     let hasExited = false;
-
-    // Phát hiện chuyển tab (trang bị ẩn)
-    const handleVisibilityChange = () => {
+    const handleVC = () => {
       if (document.hidden && !hasSubmitted && !hasExited) {
-        // Học sinh chuyển sang tab khác
-        fetch("/api/student-sessions", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId, status: "exited" }),
-        }).catch(err => console.error("Failed to update session on tab switch:", err));
+        fetch("/api/student-sessions", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, status: "exited" }) }).catch(e => e);
         hasExited = true;
       } else if (!document.hidden && hasExited && !hasSubmitted) {
-        // Học sinh quay lại tab
-        fetch("/api/student-sessions", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId, status: "active" }),
-        }).catch(err => console.error("Failed to update session on return:", err));
+        fetch("/api/student-sessions", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, status: "active" }) }).catch(e => e);
         hasExited = false;
       }
     };
-
-    // Phát hiện đóng tab/trình duyệt
-    const handleBeforeUnload = () => {
-      if (hasSubmitted) return;
-      
-      // Cập nhật trạng thái thành "exited" khi đóng tab/thoát
-      fetch("/api/student-sessions", {
-        method: "PUT",
-        keepalive: true,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId, status: "exited" }),
-      }).catch(err => console.error("Failed to update session on exit:", err));
+    const handleBU = () => {
+      if (!hasSubmitted) fetch("/api/student-sessions", { method: "PUT", keepalive: true, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, status: "exited" }) }).catch(e=>e);
     };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-    };
+    document.addEventListener("visibilitychange", handleVC);
+    window.addEventListener("beforeunload", handleBU);
+    return () => { document.removeEventListener("visibilitychange", handleVC); window.removeEventListener("beforeunload", handleBU); };
   }, [sessionId, studentName, hasSubmitted]);
 
-  const setChoice = (questionId: string, value: string) => {
-    setAnswers((prev) => ({ ...prev, [questionId]: value }));
-    
-    // Cập nhật last_activity_at để admin theo dõi
+  const setChoice = useCallback((questionId: string, value: string) => {
+    setAnswers(prev => ({ ...prev, [questionId]: value }));
     if (sessionId) {
-      fetch("/api/student-sessions/activity", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId }),
-      }).catch(err => console.error("Failed to update activity:", err));
+      fetch("/api/student-sessions/activity", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId }) }).catch(e=>e);
     }
-  };
+  }, [sessionId]);
+
+  const handleSetEssayImageUploading = useCallback((qid: string, isUploading: boolean) => {
+    setEssayImageUploading(prev => ({ ...prev, [qid]: isUploading }));
+  }, []);
+
+  const handleSetEssayImage = useCallback((qid: string, url: string | null) => {
+    setEssayImages(prev => {
+      if (!url) { const p = { ...prev }; delete p[qid]; return p; }
+      return { ...prev, [qid]: url };
+    });
+  }, []);
 
   const scrollToQuestion = (questionId: string) => {
     const el = document.getElementById(`q-${questionId}`);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
   const handleExitClick = (e: React.MouseEvent) => {
     e.preventDefault();
-    if (answeredCount > 0) {
-      setShowExitConfirm(true);
-    } else {
-      router.push("/");
-    }
+    if (answeredCount > 0) setShowExitConfirm(true); else router.push("/");
   };
 
   const handleExitConfirm = async (saveProgress: boolean) => {
     if (saveProgress && sessionId) {
-      // Giữ nguyên session và answers trong localStorage để tiếp tục sau
-      console.log("Saving progress for session:", sessionId);
-      // Cập nhật status thành exited
-      try {
-        await fetch("/api/student-sessions", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId, status: "exited" }),
-        });
-        console.log("Session marked as exited");
-      } catch (err) {
-        console.error("Failed to update session:", err);
-      }
-      // Xóa localStorage để buộc phải qua trang start lần sau
+      try { await fetch("/api/student-sessions", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, status: "exited" }) }); } catch(e){}
       localStorage.removeItem(`session-${assignment.id}`);
       localStorage.removeItem(`student-name-${assignment.id}`);
-      // Giữ draft để tiếp tục
-      console.log("Cleared session from localStorage, kept draft");
     } else {
-      // Xóa session và draft
-      if (sessionId) {
-        fetch(`/api/student-sessions/${sessionId}`, { method: "DELETE" })
-          .catch(err => console.error("Failed to delete session:", err));
-      }
+      if (sessionId) fetch(`/api/student-sessions/${sessionId}`, { method: "DELETE" }).catch(e=>e);
       localStorage.removeItem(draftKey);
       localStorage.removeItem(`session-${assignment.id}`);
       localStorage.removeItem(`student-name-${assignment.id}`);
@@ -458,363 +325,165 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
   };
 
   return (
-    <main className="min-h-screen bg-slate-100">
-      {/* Top header bar */}
-      <div className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 shadow-sm backdrop-blur-md">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
-          <div className="min-w-0 flex-1" suppressHydrationWarning>
-            <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg brand-gradient shadow-sm">
-                <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+    <main className={clsx(
+      "min-h-[100dvh] transition-colors duration-500 font-sans",
+      isDark ? "bg-[#0B1120] text-slate-200" : "bg-[#f8fafc] text-slate-800"
+    )}>
+      {isDark && (
+        <div className="fixed inset-0 pointer-events-none overflow-hidden">
+          <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-indigo-900/20 blur-[120px] rounded-full mix-blend-screen" />
+          <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-violet-900/20 blur-[120px] rounded-full mix-blend-screen" />
+        </div>
+      )}
+
+      <TabSwitchWarning sessionId={sessionId} />
+      <AutoSaveIndicator lastSaveTime={lastSaveTime} isSaving={isSaving} />
+      
+      {/* Top Navigation */}
+      <div className={clsx(
+        "sticky top-0 z-40 transition-all duration-300",
+        isDark ? "bg-[#1e293b]/80 border-b border-slate-800 backdrop-blur-xl shadow-lg" : "bg-white/80 border-b border-slate-200 backdrop-blur-xl shadow-sm"
+      )}>
+        <div className="mx-auto max-w-7xl px-4 sm:px-6">
+          <div className="flex items-center justify-between gap-4 py-3 sm:py-4">
+            <div className="flex-1 min-w-0 flex items-center gap-3">
+              <div className={clsx("hidden sm:flex h-10 w-10 shrink-0 items-center justify-center rounded-xl shadow-md bg-gradient-to-br from-indigo-500 to-violet-600 text-white")}>
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                 </svg>
               </div>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-bold text-slate-900">{assignment.title}</p>
-                <p className="text-xs text-slate-500">{assignment.subject} · {assignment.grade}{studentName ? ` · ${studentName}` : ''}</p>
+              <div className="min-w-0" suppressHydrationWarning>
+                <h1 className={clsx("truncate text-sm sm:text-lg font-black tracking-tight", isDark ? "text-white" : "text-slate-900")}>
+                  {assignment.title}
+                </h1>
+                <p className={clsx("text-[11px] sm:text-xs font-medium truncate mt-0.5", isDark ? "text-slate-400" : "text-slate-500")}>
+                  {assignment.subject} {assignment.grade && `• ${assignment.grade}`} {studentName && `• ${studentName}`}
+                </p>
               </div>
             </div>
-          </div>
 
-          {/* Countdown and progress in header */}
-          <div className="flex items-center gap-3 shrink-0">
-            {isMounted && hasTimer && (
-              <div className={clsx(
-                "flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-bold tabular-nums",
-                remaining <= 300 ? "bg-red-50 text-red-700 ring-1 ring-red-200" :
-                remaining <= 900 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200" :
-                "bg-slate-100 text-slate-700"
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              <button onClick={toggleTheme} className={clsx(
+                "p-2 rounded-xl transition-colors hidden sm:block",
+                isDark ? "bg-slate-800 text-amber-400 hover:bg-slate-700" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               )}>
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              </button>
+              
+              {isMounted && hasTimer && (
+                <div className={clsx(
+                  "flex items-center gap-1.5 rounded-lg sm:rounded-xl px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-bold tabular-nums shadow-sm transition-colors",
+                  remaining <= 300 
+                    ? isDark ? "bg-red-500/20 text-red-400 shadow-[0_0_15px_rgba(239,68,68,0.2)]" : "bg-red-100 text-red-700 border-red-200" 
+                    : remaining <= 900 
+                      ? isDark ? "bg-amber-500/20 text-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.2)]" : "bg-amber-100 text-amber-700" 
+                      : isDark ? "bg-slate-800 text-slate-300" : "bg-slate-100 text-slate-700"
+                )}>
+                  <Clock className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                  {formatClock(remaining)}
+                </div>
+              )}
+              
+              <button
+                onClick={handleExitClick}
+                className={clsx(
+                  "flex items-center justify-center gap-1.5 rounded-lg sm:rounded-xl px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-bold transition-all border shadow-sm",
+                  isDark ? "bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300"
+                )}
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                 </svg>
-                {formatClock(remaining)}
-              </div>
-            )}
-            {isMounted && (
-              <div className="hidden items-center gap-1.5 rounded-xl bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 sm:flex">
-                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                {formatVietnamTime(currentVietnamTime)}
-              </div>
-            )}
-            <button
-              onClick={handleExitClick}
-              className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
-            >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-              </svg>
-              Thoát
-            </button>
+                <span className="hidden sm:inline">Thoát</span>
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Progress bar */}
-        <div className="h-1 bg-slate-100">
+        {/* Global Progress Line */}
+        <div className={clsx("h-[3px] w-full", isDark ? "bg-slate-800" : "bg-slate-100")}>
           <div
-            className="h-full brand-gradient transition-all duration-500"
+            className="h-full bg-gradient-to-r from-emerald-400 via-teal-400 to-indigo-500 transition-all duration-700 ease-out"
             style={{ width: `${nonSectionQuestions.length > 0 ? (answeredCount / nonSectionQuestions.length) * 100 : 0}%` }}
           />
         </div>
       </div>
 
-      {/* Exit confirmation modal */}
       {showExitConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-scale-in">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-100">
-                <svg className="h-5 w-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-md animate-fade-in">
+          <div className={clsx("w-full max-w-sm rounded-[2rem] p-6 shadow-2xl animate-scale-in border", isDark ? "bg-slate-900 border-slate-700" : "bg-white border-slate-100")}>
+            <div className="mb-6 flex flex-col items-center text-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/20 text-amber-500 mb-4 ring-8 ring-amber-500/10">
+                <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
               </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Thoát bài tập?</h3>
-                <p className="text-sm text-slate-500">Đã làm {answeredCount}/{nonSectionQuestions.length} câu</p>
-              </div>
+              <h3 className={clsx("text-lg font-black mb-1", isDark ? "text-white" : "text-slate-900")}>Thoát bài ngay?</h3>
+              <p className={clsx("text-sm", isDark ? "text-slate-400" : "text-slate-500")}>Bạn đã làm {answeredCount}/{nonSectionQuestions.length} câu. Tiến trình có thể lưu lại được.</p>
             </div>
-            <div className="space-y-2">
-              <button
-                onClick={() => handleExitConfirm(true)}
-                className="w-full rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700"
-              >
-                Lưu tiến độ và thoát
+            <div className="space-y-3">
+              <button onClick={() => handleExitConfirm(true)} className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-500 px-4 py-3.5 text-sm font-bold text-white transition-all shadow-lg shadow-indigo-600/30">
+                Lưu và thoát (Tiếp tục sau)
               </button>
-              <button
-                onClick={() => handleExitConfirm(false)}
-                className="w-full rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:bg-red-100"
-              >
-                Xóa bài và thoát
+              <button onClick={() => handleExitConfirm(false)} className={clsx("w-full rounded-xl border px-4 py-3.5 text-sm font-bold transition-all", isDark ? "border-red-500/20 text-red-400 bg-red-500/10 hover:bg-red-500/20" : "border-red-200 text-red-600 bg-red-50 hover:bg-red-100")}>
+                Xoá bài (Làm lại cữ đầu)
               </button>
-              <button
-                onClick={() => setShowExitConfirm(false)}
-                className="w-full rounded-xl px-4 py-2 text-sm text-slate-500 transition hover:text-slate-700"
-              >
-                Tiếp tục làm bài
+              <button onClick={() => setShowExitConfirm(false)} className={clsx("w-full rounded-xl px-4 py-3.5 text-sm font-bold transition-all", isDark ? "text-slate-400 hover:text-white hover:bg-slate-800" : "text-slate-500 hover:text-slate-800 hover:bg-slate-100")}>
+                Hủy, quay lại bài
               </button>
             </div>
           </div>
         </div>
       )}
 
-      <div className="mx-auto max-w-5xl px-4 py-6">
-        <div className="grid gap-5 md:grid-cols-[1fr,260px]">
-          {/* Questions panel */}
-          <div className="space-y-4">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8 lg:py-10">
+        <div className="grid gap-6 lg:gap-8 lg:grid-cols-[1fr,340px] items-start">
+          
+          <div className="space-y-4 sm:space-y-6 min-w-0 pb-20 lg:pb-0">
             {questions.map((q, idx) => {
               const questionNumber = questions.slice(0, idx + 1).filter(q2 => q2.type !== 'section').length;
-              const isAnswered = q.type !== 'section' && Boolean(answers[q.id]);
               return (
-                <div
+                <AssignmentQuestion
                   key={q.id}
-                  id={`q-${q.id}`}
-                  className={clsx(
-                    "rounded-2xl p-5 transition-all",
-                    q.type === "section"
-                      ? "border-2 border-indigo-200 bg-gradient-to-r from-indigo-50 to-violet-50"
-                      : isAnswered
-                        ? "border border-emerald-200 bg-white shadow-sm ring-1 ring-emerald-100"
-                        : "border border-slate-200 bg-white shadow-sm"
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      {q.type === "section" ? (
-                        <div className="flex items-start gap-3">
-                          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-100">
-                            <svg className="h-4 w-4 text-indigo-600" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                            </svg>
-                          </div>
-                          <div className="flex-1">
-                            <p className="text-xs font-bold uppercase tracking-widest text-indigo-600 mb-2">Thông báo</p>
-                            {q.imageUrl && (
-                              <div className="mb-3 overflow-hidden rounded-xl border border-indigo-100">
-                                <img src={q.imageUrl} alt="Thông báo" className="max-h-64 w-auto" loading="eager"
-                                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                              </div>
-                            )}
-                            <p className="text-sm font-semibold text-slate-900 leading-relaxed">{q.content}</p>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className={clsx(
-                              "flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold",
-                              isAnswered ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"
-                            )}>
-                              {questionNumber}
-                            </span>
-                            {isAnswered && (
-                              <span className="text-xs font-semibold text-emerald-600">✓ Đã trả lời</span>
-                            )}
-                          </div>
-                          {q.imageUrl && (
-                            <div className="mb-3 overflow-hidden rounded-xl border border-slate-200">
-                              <img src={q.imageUrl} alt="Câu hỏi" className="max-h-64 w-auto" loading="eager"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                            </div>
-                          )}
-                          {q.content && (
-                            <p className="text-sm font-semibold text-slate-900 leading-relaxed mb-3">{q.content}</p>
-                          )}
-                        </>
-                      )}
-                    </div>
-                    {q.type !== "section" && (
-                      <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-bold text-amber-700 ring-1 ring-amber-200">
-                        {Number(q.points ?? 0).toFixed(3)}đ
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Answer inputs */}
-                  {q.type === "mcq" && (
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      {(q.choices && q.choices.length > 0 ? q.choices : ["", "", "", ""]).map((choice, ci) => {
-                        const val = String.fromCharCode(65 + ci);
-                        const checked = answers[q.id] === val;
-                        return (
-                          <label
-                            key={ci}
-                            className={clsx(
-                              "flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-sm transition-all",
-                              checked
-                                ? "border-indigo-400 bg-indigo-600 text-white shadow-sm"
-                                : "border-slate-200 bg-slate-50 text-slate-800 hover:border-indigo-300 hover:bg-indigo-50"
-                            )}
-                          >
-                            <span className={clsx(
-                              "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold",
-                              checked ? "bg-white/20 text-white" : "bg-white text-slate-600 shadow-sm ring-1 ring-slate-200"
-                            )}>
-                              {val}
-                            </span>
-                            <input type="radio" name={`q-${q.id}`} className="sr-only" checked={checked} disabled={locked} onChange={() => setChoice(q.id, val)} />
-                            {choice && <span className="flex-1">{choice}</span>}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {q.type === "essay" && (
-                    <div className="mt-3 space-y-3">
-                      <textarea
-                        className="min-h-[120px] w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 transition focus:border-indigo-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                        placeholder="Nhập câu trả lời của bạn..."
-                        disabled={locked}
-                        value={answers[q.id] ?? ""}
-                        onChange={(e) => setChoice(q.id, e.target.value)}
-                      />
-                      {/* Essay image upload */}
-                      {!locked && (
-                        <div>
-                          {essayImages[q.id] ? (
-                            <div className="relative overflow-hidden rounded-xl border border-emerald-200">
-                              <img src={essayImages[q.id]} alt="Ảnh bài làm" className="max-h-64 w-auto" />
-                              <button
-                                type="button"
-                                onClick={() => setEssayImages(prev => { const n = { ...prev }; delete n[q.id]; return n; })}
-                                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-red-600 text-white shadow transition hover:bg-red-700"
-                              >
-                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                              </button>
-                            </div>
-                          ) : (
-                            <label className={clsx(
-                              "flex cursor-pointer items-center gap-2 rounded-xl border border-dashed px-4 py-3 text-sm transition",
-                              essayImageUploading[q.id]
-                                ? "border-indigo-300 bg-indigo-50 text-indigo-500 cursor-wait"
-                                : "border-slate-300 bg-slate-50 text-slate-500 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600"
-                            )}>
-                              {essayImageUploading[q.id] ? (
-                                <>
-                                  <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                                  </svg>
-                                  <span>Đang tải lên...</span>
-                                </>
-                              ) : (
-                                <>
-                                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                  </svg>
-                                  <span>Đính kèm ảnh bài làm (tuỳ chọn)</span>
-                                </>
-                              )}
-                              <input
-                                type="file"
-                                accept="image/*"
-                                className="sr-only"
-                                disabled={essayImageUploading[q.id]}
-                                onChange={async (e) => {
-                                  const file = e.target.files?.[0];
-                                  if (!file) return;
-                                  setEssayImageUploading(prev => ({ ...prev, [q.id]: true }));
-                                  try {
-                                    const fd = new FormData();
-                                    fd.append("file", file);
-                                    const res = await fetch("/api/upload-answer-image", { method: "POST", body: fd });
-                                    const data = await res.json();
-                                    if (res.ok && data.url) {
-                                      setEssayImages(prev => ({ ...prev, [q.id]: data.url }));
-                                    }
-                                  } catch {
-                                    // silently ignore
-                                  } finally {
-                                    setEssayImageUploading(prev => ({ ...prev, [q.id]: false }));
-                                    e.target.value = "";
-                                  }
-                                }}
-                              />
-                            </label>
-                          )}
-                        </div>
-                      )}
-                      {/* Show uploaded image when locked */}
-                      {locked && essayImages[q.id] && (
-                        <div className="overflow-hidden rounded-xl border border-slate-200">
-                          <img src={essayImages[q.id]} alt="Ảnh bài làm" className="max-h-64 w-auto" />
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {q.type === "short_answer" && (
-                    <input
-                      type="text"
-                      className="mt-3 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 transition focus:border-indigo-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                      placeholder="Nhập câu trả lời ngắn..."
-                      disabled={locked}
-                      value={answers[q.id] ?? ""}
-                      onChange={(e) => setChoice(q.id, e.target.value)}
-                    />
-                  )}
-
-                  {q.type === "true_false" && q.subQuestions && q.subQuestions.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      {q.subQuestions.map((sq, si) => {
-                        const tfAnswers = (() => { try { return JSON.parse(answers[q.id] || "{}"); } catch { return {}; } })();
-                        const selected = tfAnswers[sq.id];
-                        return (
-                          <div key={sq.id} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                            <span className="w-5 text-xs font-bold text-slate-400">{String.fromCharCode(97 + si)}.</span>
-                            <span className="flex-1 text-sm text-slate-800">
-                              {sq.content || <em className="not-italic text-slate-400">Câu {String.fromCharCode(97 + si)}</em>}
-                            </span>
-                            <div className="flex gap-1.5">
-                              {["true", "false"].map((val) => (
-                                <button
-                                  key={val}
-                                  type="button"
-                                  disabled={locked}
-                                  onClick={() => {
-                                    const updated = { ...tfAnswers, [sq.id]: val };
-                                    setChoice(q.id, JSON.stringify(updated));
-                                  }}
-                                  className={clsx(
-                                    "rounded-lg px-3 py-1 text-xs font-semibold transition",
-                                    selected === val
-                                      ? val === "true" ? "bg-emerald-600 text-white" : "bg-red-500 text-white"
-                                      : "border border-slate-200 bg-white text-slate-600 hover:border-slate-400"
-                                  )}
-                                >
-                                  {val === "true" ? "Đúng" : "Sai"}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+                  q={q}
+                  idx={idx}
+                  questionNumber={questionNumber}
+                  answer={answers[q.id]}
+                  essayImage={essayImages[q.id]}
+                  essayImageUploading={essayImageUploading[q.id] || false}
+                  locked={locked}
+                  onSetChoice={setChoice}
+                  onSetEssayImageUploading={handleSetEssayImageUploading}
+                  onSetEssayImage={handleSetEssayImage}
+                  theme={theme}
+                />
               );
             })}
 
-            {/* Submit button */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="mb-4 text-center">
-                <p className="text-sm text-slate-600">
-                  Đã hoàn thành <span className="font-bold text-slate-900">{answeredCount}</span>/<span className="font-bold text-slate-900">{nonSectionQuestions.length}</span> câu
+            <div className={clsx(
+              "rounded-3xl border p-6 sm:p-8 text-center transition-all duration-300 shadow-xl mt-8",
+              isDark ? "bg-slate-800/80 border-slate-700" : "bg-white border-slate-200"
+            )}>
+              <div className="mb-6">
+                <div className="inline-flex items-center justify-center p-3 sm:p-4 rounded-full bg-emerald-500/10 text-emerald-500 mb-4">
+                  <svg className="w-8 h-8 sm:w-10 sm:h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <h3 className={clsx("text-lg sm:text-xl font-black mb-1", isDark ? "text-white" : "text-slate-900")}>Hoàn thành bài làm</h3>
+                <p className={clsx("text-sm font-medium", isDark ? "text-slate-400" : "text-slate-500")}>
+                  Đã làm <span className={clsx("font-bold", isDark ? "text-white" : "text-slate-900")}>{answeredCount}</span>/{nonSectionQuestions.length} câu
                 </p>
                 {answeredCount < nonSectionQuestions.length && !locked && (
-                  <p className="mt-1 text-xs text-amber-600">Còn {nonSectionQuestions.length - answeredCount} câu chưa trả lời</p>
+                  <p className="mt-1 text-sm font-bold text-amber-500">Còn {nonSectionQuestions.length - answeredCount} câu chưa làm!</p>
                 )}
               </div>
               <button
                 className={clsx(
-                  "w-full rounded-xl px-6 py-3 text-sm font-bold transition-all",
+                  "w-full sm:w-auto min-w-[200px] rounded-2xl px-8 py-4 text-sm sm:text-base font-black transition-all duration-300 shadow-lg",
                   locked || submitting
-                    ? "cursor-not-allowed bg-slate-100 text-slate-400"
-                    : "brand-gradient text-white shadow-sm hover:opacity-90 hover:shadow-md"
+                    ? isDark ? "cursor-not-allowed bg-slate-700 text-slate-500 shadow-none border border-slate-600" : "cursor-not-allowed bg-slate-100 text-slate-400 shadow-none"
+                    : "bg-gradient-to-br from-indigo-500 via-indigo-600 to-violet-600 text-white shadow-indigo-500/30 hover:shadow-indigo-500/40 hover:-translate-y-0.5 active:translate-y-0"
                 )}
                 type="button"
                 disabled={locked || submitting}
@@ -822,57 +491,62 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
               >
                 {submitting ? (
                   <span className="flex items-center justify-center gap-2">
-                    <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <svg className="h-5 w-5 animate-spin" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                     </svg>
                     Đang nộp bài...
                   </span>
-                ) : locked ? "Đã khóa bài" : "Nộp bài"}
+                ) : locked ? "Đã khóa" : "Nộp bài ngay"}
               </button>
             </div>
           </div>
 
-          {/* Sidebar */}
-          <div className="space-y-4 md:sticky md:top-20 md:self-start">
-            {/* Vietnam clock */}
+          <div className="flex flex-col gap-6 lg:sticky lg:top-24 lg:max-h-[calc(100vh-6rem)]">
+            
+            {/* Realtime Vietnam Clock */}
             {isMounted && (
-              <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 to-violet-50 p-4 text-center">
-                <p className="text-xs font-semibold uppercase tracking-widest text-indigo-500">Giờ hiện tại</p>
-                <p className="mt-1 font-mono text-2xl font-bold text-indigo-900 tabular-nums">
+              <div className={clsx("rounded-3xl border p-5 text-center shadow-lg relative overflow-hidden", isDark ? "bg-slate-800/90 border-slate-700" : "bg-gradient-to-br from-indigo-50 to-violet-50 border-indigo-100")}>
+                <div className="absolute top-0 right-0 p-3 opacity-20">
+                  <Clock className="w-16 h-16" />
+                </div>
+                <p className={clsx("text-xs font-bold uppercase tracking-widest relative z-10", isDark ? "text-indigo-400" : "text-indigo-600")}>Giờ chuẩn Việt Nam</p>
+                <p className={clsx("mt-1.5 font-mono text-[1.75rem] font-black tabular-nums relative z-10", isDark ? "text-white" : "text-indigo-900")}>
                   {formatVietnamTime(currentVietnamTime)}
                 </p>
               </div>
             )}
 
-            {/* Timer */}
+            {/* Timer Panel */}
             {isMounted && hasTimer && (
               <div className={clsx(
-                "rounded-2xl border p-4 text-center transition-colors",
-                timeUp ? "border-red-200 bg-red-50" :
-                remaining <= 300 ? "border-red-200 bg-red-50" :
-                remaining <= 900 ? "border-amber-200 bg-amber-50" :
-                "border-slate-200 bg-white"
+                "rounded-3xl border p-6 text-center transition-all duration-500 shadow-xl",
+                timeUp 
+                  ? isDark ? "border-red-500/30 bg-red-500/10 shadow-[0_0_20px_rgba(239,68,68,0.15)]" : "border-red-200 bg-red-50 shadow-red-100/50"
+                  : remaining <= 300 
+                    ? isDark ? "border-amber-500/30 bg-amber-500/10 animate-pulse-slow" : "border-amber-200 bg-amber-50"
+                    : isDark ? "border-slate-700 bg-slate-800/90" : "border-slate-200 bg-white"
               )}>
                 <p className={clsx(
-                  "text-xs font-semibold uppercase tracking-widest",
-                  timeUp || remaining <= 300 ? "text-red-500" : remaining <= 900 ? "text-amber-600" : "text-slate-500"
+                  "text-[10px] font-black uppercase tracking-[0.2em] mb-2",
+                  timeUp || remaining <= 300 ? "text-red-500" : remaining <= 900 ? "text-amber-500" : isDark ? "text-slate-400" : "text-slate-500"
                 )}>
                   Thời gian còn lại
                 </p>
                 <p className={clsx(
-                  "mt-1 font-mono text-4xl font-bold tabular-nums",
-                  timeUp || remaining <= 300 ? "text-red-600" : remaining <= 900 ? "text-amber-700" : "text-slate-900"
+                  "font-mono text-5xl font-black tabular-nums tracking-tighter drop-shadow-sm",
+                  timeUp || remaining <= 300 ? "text-red-500" : remaining <= 900 ? "text-amber-500" : isDark ? "text-slate-100" : "text-slate-800"
                 )}>
                   {formatClock(remaining)}
                 </p>
-                {timeUp && <p className="mt-1 text-xs font-bold text-red-600">Hết giờ!</p>}
+                {timeUp && <p className="mt-2 text-sm font-black text-red-500 animate-pulse">Đã hết giờ làm bài!</p>}
+                
                 {!timeUp && hasTimer && (
-                  <div className="mt-3 h-1.5 w-full rounded-full bg-slate-200 overflow-hidden">
+                  <div className={clsx("mt-5 h-2 w-full rounded-full overflow-hidden shadow-inner", isDark ? "bg-slate-700" : "bg-slate-100")}>
                     <div
                       className={clsx(
-                        "h-full rounded-full transition-all duration-1000",
-                        remaining <= 300 ? "bg-red-500" : remaining <= 900 ? "bg-amber-500" : "bg-indigo-500"
+                        "h-full rounded-full transition-all duration-1000 ease-linear",
+                        remaining <= 300 ? "bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]" : remaining <= 900 ? "bg-amber-500" : "bg-gradient-to-r from-indigo-500 to-violet-500"
                       )}
                       style={{ width: `${(remaining / ((assignment.durationMinutes ?? 1) * 60)) * 100}%` }}
                     />
@@ -881,27 +555,16 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
               </div>
             )}
 
-            {/* Progress */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="mb-3 flex items-center justify-between">
-                <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Tiến độ</p>
-                <span className="text-sm font-bold text-slate-900">{answeredCount}/{nonSectionQuestions.length}</span>
+            {/* Question Map */}
+            <div className={clsx("rounded-3xl border p-5 shadow-lg flex-1 min-h-0 flex flex-col", isDark ? "bg-slate-800/90 border-slate-700" : "bg-white border-slate-200")}>
+              <div className="flex items-center justify-between mb-4 shrink-0">
+                <p className={clsx("text-xs font-bold uppercase tracking-widest", isDark ? "text-slate-400" : "text-slate-500")}>Câu hỏi</p>
+                <span className={clsx("text-xs font-black px-2 py-0.5 rounded-md", isDark ? "bg-slate-700 text-slate-300" : "bg-slate-100 text-slate-700")}>
+                  {answeredCount}/{nonSectionQuestions.length}
+                </span>
               </div>
-              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
-                <div
-                  className="h-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all duration-500 rounded-full"
-                  style={{ width: `${nonSectionQuestions.length > 0 ? (answeredCount / nonSectionQuestions.length) * 100 : 0}%` }}
-                />
-              </div>
-              <p className="mt-2 text-xs text-slate-500">
-                {nonSectionQuestions.length > 0 ? Math.round((answeredCount / nonSectionQuestions.length) * 100) : 0}% hoàn thành
-              </p>
-            </div>
-
-            {/* Question navigator */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-500">Câu hỏi</p>
-              <div className="grid grid-cols-5 gap-1.5">
+              
+              <div className="grid grid-cols-5 gap-2 overflow-y-auto pr-1 pb-2 scrollbar-thin flex-1 min-h-0">
                 {nonSectionQuestions.map((q, idx) => {
                   const done = Boolean(answers[q.id]);
                   return (
@@ -910,27 +573,35 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
                       type="button"
                       onClick={() => scrollToQuestion(q.id)}
                       className={clsx(
-                        "flex h-9 w-full items-center justify-center rounded-xl text-xs font-bold transition-all",
+                        "flex h-10 w-full items-center justify-center rounded-xl text-xs font-black transition-all duration-200 relative overflow-hidden",
                         done
-                          ? "bg-indigo-600 text-white shadow-sm hover:bg-indigo-700"
-                          : "border border-slate-200 bg-slate-50 text-slate-600 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600"
+                          ? "bg-indigo-500 text-white shadow-md shadow-indigo-500/20 hover:bg-indigo-600 hover:scale-105"
+                          : isDark 
+                            ? "bg-slate-700/50 text-slate-400 hover:bg-slate-600 hover:text-slate-200 border border-slate-600/50" 
+                            : "bg-slate-50 text-slate-500 border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600"
                       )}
                     >
+                      {/* Active indicator dot */}
+                      {done && <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-white/50" />}
                       {idx + 1}
                     </button>
                   );
                 })}
               </div>
+
               {nonSectionQuestions.length > 0 && (
-                <div className="mt-3 flex items-center gap-3 text-xs text-slate-500">
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-indigo-600" />Đã làm</span>
-                  <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded border border-slate-300 bg-slate-50" />Chưa làm</span>
+                <div className="mt-4 pt-4 border-t flex flex-wrap justify-center gap-4 text-[11px] font-bold shrink-0 border-inherit">
+                  <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-md bg-indigo-500 shadow-sm" />Đã làm</span>
+                  <span className="flex items-center gap-1.5"><span className={clsx("h-3 w-3 rounded-md border", isDark ? "bg-slate-700/50 border-slate-600" : "bg-slate-50 border-slate-200")} />Chưa làm</span>
                 </div>
               )}
             </div>
+
           </div>
         </div>
       </div>
+      
+      {/* Mobile Question Map (Bottom Sheet/Floating) could be implemented here as well */}
     </main>
   );
 }

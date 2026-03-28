@@ -119,7 +119,7 @@ export async function POST(req: Request) {
         question_id: q.id,
         answer: studentAnswer || "",
         answer_image_url: (essayImages as Record<string, string> | undefined)?.[q.id] || null,
-        is_correct: q.type === "mcq" ? isCorrect : null,
+        is_correct: (q.type === "mcq" || q.type === "short_answer" || q.type === "true_false") ? isCorrect : null,
         points_awarded: pointsAwarded,
       });
     }

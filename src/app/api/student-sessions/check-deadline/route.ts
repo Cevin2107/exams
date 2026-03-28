@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 // GET: Kiểm tra xem session đã hết hạn chưa
 export async function GET(req: Request) {
   try {

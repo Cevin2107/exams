@@ -19,6 +19,7 @@ export async function PATCH(
       content: body.content,
       choices: body.choices,
       answerKey: body.answerKey,
+      points: body.points,
       imageUrl: body.imageUrl,
       order: body.order,
       subQuestions: body.subQuestions,
