@@ -4,10 +4,10 @@ const PUTER_OPENAI_BASE_URL = "https://api.puter.com/puterai/openai/v1/chat/comp
 const NEMOTRON_VL_MODEL = "nvidia/nemotron-nano-12b-v2-vl";
 const GEMINI_MODEL = "google/gemini-2.5-flash";
 const QWEN_VL_MODEL = "qwen/qwen-vl-max";
-const MATH_SOLVER_MODEL = "openai/o3";
 const GPT4O_MINI_MODEL = "openai/gpt-4o-mini";
 const GPT41_MINI_MODEL = "openai/gpt-4.1-mini";
 const QWEN_FREE_MODEL = "qwen/qwen3-4b:free";
+const QWEN36_PLUS_PREVIEW_FREE_MODEL = "qwen/qwen3.6-plus-preview:free";
 const GEMMA_FREE_MODEL = "google/gemma-3n-e2b-it:free";
 const LIQUID_THINKING_FREE_MODEL = "liquid/lfm-2.5-1.2b-thinking:free";
 const ARCEE_FREE_MODEL = "arcee-ai/trinity-large-preview:free";
@@ -17,6 +17,22 @@ const DEEPSEEK_R1_DISTILL_QWEN32_MODEL = "deepseek/deepseek-r1-distill-qwen-32b"
 const QWQ32_MODEL = "qwen/qwq-32b";
 const QWEN3_THINKING_30B_MODEL = "qwen/qwen3-30b-a3b-thinking-2507";
 const O4_MINI_MODEL = "openai/o4-mini";
+const MATH_SOLVER_MODEL = process.env.PUTER_SOLVER_MODEL || QWEN36_PLUS_PREVIEW_FREE_MODEL;
+const PUTER_TIMEOUT_MS = Number(process.env.PUTER_TIMEOUT_MS || 25000);
+const SOLVER_CONCURRENCY = Math.max(1, Number(process.env.PUTER_SOLVER_CONCURRENCY || 3));
+
+function isAiDebugEnabled() {
+  return process.env.NODE_ENV !== "production" || process.env.PUTER_DEBUG === "1";
+}
+
+function logAi(stage: string, message: string, payload?: Record<string, unknown>) {
+  if (!isAiDebugEnabled()) return;
+  if (payload) {
+    console.info(`[AI][${stage}] ${message}`, payload);
+    return;
+  }
+  console.info(`[AI][${stage}] ${message}`);
+}
 
 function getModelList(envName: string, defaults: string[]) {
   const fromEnv = process.env[envName]?.split(",").map((x) => x.trim()).filter(Boolean);
@@ -42,6 +58,7 @@ const VALIDATION_FALLBACK_MODELS = getModelList("PUTER_VALIDATION_MODELS", [
 ]);
 
 const MATH_SOLVER_FALLBACK_MODELS = getModelList("PUTER_SOLVER_MODELS", [
+  MATH_SOLVER_MODEL,
   DEEPSEEK_REASONER_MODEL,
   DEEPSEEK_R1_DISTILL_QWEN32_MODEL,
   QWQ32_MODEL,
@@ -110,22 +127,61 @@ async function callPuterChat(messages: OpenAiMessage[], model: string, maxTokens
     throw new Error("Thiếu PUTER_AUTH_TOKEN");
   }
 
-  const res = await fetch(PUTER_OPENAI_BASE_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      model,
-      temperature,
-      max_tokens: maxTokens,
-      messages,
-    }),
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PUTER_TIMEOUT_MS);
+
+  logAi("PUTER", "Request started", {
+    model,
+    maxTokens,
+    temperature,
+    timeoutMs: PUTER_TIMEOUT_MS,
   });
+
+  let res: Response;
+  try {
+    res = await fetch(PUTER_OPENAI_BASE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature,
+        max_tokens: maxTokens,
+        messages,
+      }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    clearTimeout(timeout);
+    const elapsedMs = Date.now() - startedAt;
+    if (error instanceof Error && error.name === "AbortError") {
+      const timeoutError: HttpError = Object.assign(
+        new Error(`Puter timeout after ${PUTER_TIMEOUT_MS}ms for model ${model}`),
+        { status: 408 }
+      );
+      logAi("PUTER", "Request timeout", { model, elapsedMs });
+      throw timeoutError;
+    }
+    logAi("PUTER", "Request failed before response", {
+      model,
+      elapsedMs,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!res.ok) {
     const body = await res.text();
+    logAi("PUTER", "Request failed", {
+      model,
+      status: res.status,
+      elapsedMs: Date.now() - startedAt,
+    });
     const message = res.status === 401
       ? "Puter 401 (PUTER_AUTH_TOKEN không hợp lệ hoặc chưa nạp)"
       : res.status === 402
@@ -140,6 +196,11 @@ async function callPuterChat(messages: OpenAiMessage[], model: string, maxTokens
   if (typeof content === "string") {
     const trimmed = content.trim();
     if (!trimmed) throw new Error(`Puter empty content from model ${model}`);
+    logAi("PUTER", "Request success", {
+      model,
+      elapsedMs: Date.now() - startedAt,
+      contentLength: trimmed.length,
+    });
     return trimmed;
   }
 
@@ -149,6 +210,11 @@ async function callPuterChat(messages: OpenAiMessage[], model: string, maxTokens
       .join("\n")
       .trim();
     if (!text) throw new Error(`Puter empty array content from model ${model}`);
+    logAi("PUTER", "Request success (array content)", {
+      model,
+      elapsedMs: Date.now() - startedAt,
+      contentLength: text.length,
+    });
     return text;
   }
 
@@ -163,17 +229,40 @@ async function callWithModelFallback(
 ) {
   let lastError: unknown = null;
   const attempts: string[] = [];
+  const startedAt = Date.now();
+
+  logAi("FALLBACK", "Start model fallback", {
+    modelCount: models.length,
+    maxTokens,
+    temperature,
+  });
 
   for (const model of models) {
+    const modelStartedAt = Date.now();
     try {
       const content = await callPuterChat(messages, model, maxTokens, temperature);
+      logAi("FALLBACK", "Model selected", {
+        model,
+        tryMs: Date.now() - modelStartedAt,
+        totalMs: Date.now() - startedAt,
+      });
       return { content, model };
     } catch (error) {
       lastError = error;
       const httpError = error as HttpError;
       attempts.push(`${model}:${httpError?.status || "ERR"}`);
+      logAi("FALLBACK", "Model failed", {
+        model,
+        status: httpError?.status || "ERR",
+        tryMs: Date.now() - modelStartedAt,
+      });
     }
   }
+
+  logAi("FALLBACK", "All models failed", {
+    attempts,
+    totalMs: Date.now() - startedAt,
+  });
 
   if ((lastError as HttpError)?.status === 402) {
     throw new Error(`Puter 402: Các model đang hết credit/chưa được cấp quyền (${attempts.join(", ")})`);
@@ -481,7 +570,7 @@ async function solveOneQuestion(
   _inputText: string,
   _imageUrl: string | null
 ): Promise<"A" | "B" | "C" | "D" | null> {
-  const isDev = process.env.NODE_ENV !== "production";
+  const isDev = isAiDebugEnabled();
   const questionForSolve = {
     question: question.question,
     options: question.options,
@@ -558,62 +647,45 @@ async function solveOneQuestion(
   }
 }
 
-async function solveOneQuestionDoubleCheck(
-  question: GeneratedQuestion
-): Promise<"A" | "B" | "C" | "D" | null> {
-  const questionForSolve = {
-    question: question.question,
-    options: question.options,
-  };
-
-  try {
-    const strictAttempt = await callWithModelFallback(
-      [
-        {
-          role: "system",
-          content:
-            "Bạn là bộ chấm đáp án trắc nghiệm. Chỉ được trả về JSON object đúng schema: {\"correct_answer\":\"A\"}. Không thêm chữ khác.",
-        },
-        {
-          role: "user",
-          content: `Giải câu hỏi sau và trả về đúng JSON object duy nhất.\n${JSON.stringify(questionForSolve)}`,
-        },
-      ],
-      MATH_SOLVER_FALLBACK_MODELS,
-      120,
-      0
-    );
-
-    const raw = strictAttempt.content.trim();
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (jsonMatch?.[0]) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]) as { correct_answer?: unknown; answer?: unknown };
-        const ans = normalizeOptionLetter(parsed.correct_answer ?? parsed.answer);
-        if (ans) return ans;
-      } catch {
-        // fallback parse below
-      }
-    }
-
-    return normalizeOptionLetter(raw);
-  } catch {
-    return null;
-  }
-}
-
 async function applyDoubleCheckAnswers(
   questions: GeneratedQuestion[]
 ): Promise<GeneratedQuestion[]> {
   if (questions.length < 3) return questions;
 
+  logAi("SOLVER", "Double-check answers started", {
+    questionCount: questions.length,
+    concurrency: SOLVER_CONCURRENCY,
+  });
+
   const checked = [...questions];
-  for (let i = 0; i < checked.length; i += 1) {
-    const ans = await solveOneQuestionDoubleCheck(checked[i]);
+  await runWithConcurrency(checked.length, SOLVER_CONCURRENCY, async (i) => {
+    const ans = await solveOneQuestion(checked[i], "", null);
     if (ans) checked[i].correct_answer = ans;
-  }
+  });
+
+  logAi("SOLVER", "Double-check answers finished", {
+    questionCount: checked.length,
+  });
 
   return checked;
+}
+
+async function runWithConcurrency(
+  total: number,
+  concurrency: number,
+  worker: (index: number) => Promise<void>
+) {
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, total) }, async () => {
+    while (true) {
+      const current = nextIndex;
+      nextIndex += 1;
+      if (current >= total) break;
+      await worker(current);
+    }
+  });
+
+  await Promise.all(workers);
 }
 
 async function runMathSolving(
@@ -622,7 +694,12 @@ async function runMathSolving(
   _imageUrl: string | null
 ): Promise<GeneratedQuestion[]> {
   if (questions.length === 0) return questions;
-  const isDev = process.env.NODE_ENV !== "production";
+  const isDev = isAiDebugEnabled();
+  const solvingStartedAt = Date.now();
+  logAi("SOLVER", "Batch solving started", {
+    questionCount: questions.length,
+    concurrency: SOLVER_CONCURRENCY,
+  });
   const solvePayload = stripSolvedFields(questions);
 
   const userParts: Array<VisionTextPart | VisionImagePart> = [
@@ -676,15 +753,26 @@ async function runMathSolving(
     if (!suspiciousBatch) return solvedBatch;
 
     const fallbackSolved = [...solvedBatch];
-    for (let i = 0; i < fallbackSolved.length; i += 1) {
+    await runWithConcurrency(fallbackSolved.length, SOLVER_CONCURRENCY, async (i) => {
       const answer = await solveOneQuestion(fallbackSolved[i], "", null);
       if (answer) fallbackSolved[i].correct_answer = answer;
-    }
+    });
 
     if (fallbackSolved.length >= 3 && uniqueAnswerCount(fallbackSolved) === 1) {
       const doubleChecked = await applyDoubleCheckAnswers(fallbackSolved);
-      if (uniqueAnswerCount(doubleChecked) > 1) return doubleChecked;
+      if (uniqueAnswerCount(doubleChecked) > 1) {
+        logAi("SOLVER", "Batch solving finished with double-check", {
+          questionCount: doubleChecked.length,
+          elapsedMs: Date.now() - solvingStartedAt,
+        });
+        return doubleChecked;
+      }
     }
+
+    logAi("SOLVER", "Batch solving finished with per-question fallback", {
+      questionCount: fallbackSolved.length,
+      elapsedMs: Date.now() - solvingStartedAt,
+    });
 
     return fallbackSolved;
   } catch {
@@ -692,15 +780,26 @@ async function runMathSolving(
       console.info("[AI Solver] Batch solve failed, switching to per-question fallback");
     }
     const fallbackSolved = [...questions];
-    for (let i = 0; i < fallbackSolved.length; i += 1) {
+    await runWithConcurrency(fallbackSolved.length, SOLVER_CONCURRENCY, async (i) => {
       const answer = await solveOneQuestion(fallbackSolved[i], "", null);
       if (answer) fallbackSolved[i].correct_answer = answer;
-    }
+    });
 
     if (fallbackSolved.length >= 3 && uniqueAnswerCount(fallbackSolved) === 1) {
       const doubleChecked = await applyDoubleCheckAnswers(fallbackSolved);
-      if (uniqueAnswerCount(doubleChecked) > 1) return doubleChecked;
+      if (uniqueAnswerCount(doubleChecked) > 1) {
+        logAi("SOLVER", "Batch solving recovered after error", {
+          questionCount: doubleChecked.length,
+          elapsedMs: Date.now() - solvingStartedAt,
+        });
+        return doubleChecked;
+      }
     }
+
+    logAi("SOLVER", "Batch solving finished after error fallback", {
+      questionCount: fallbackSolved.length,
+      elapsedMs: Date.now() - solvingStartedAt,
+    });
 
     return fallbackSolved;
   }
@@ -784,6 +883,12 @@ async function runQwenValidation(
 }
 
 async function generateQuestionsFromChunk(text: string, imageUrl: string | null = null): Promise<GeneratedQuestion[]> {
+  const chunkStartedAt = Date.now();
+  logAi("PIPELINE", "Generate chunk started", {
+    textLength: text.length,
+    hasImage: Boolean(imageUrl),
+  });
+
   let geminiRaw = "";
   const expectedCountHint = estimateQuestionCountFromText(text);
 
@@ -797,6 +902,10 @@ async function generateQuestionsFromChunk(text: string, imageUrl: string | null 
     try {
       const parsed = normalizeQuestions(JSON.parse(extractFirstJsonArray(geminiRaw)));
       if (parsed.length > 0) {
+        logAi("PIPELINE", "Structuring parsed questions", {
+          count: parsed.length,
+          elapsedMs: Date.now() - chunkStartedAt,
+        });
         return runMathSolving(parsed, text, imageUrl);
       }
     } catch {
@@ -807,19 +916,33 @@ async function generateQuestionsFromChunk(text: string, imageUrl: string | null 
   try {
     const qwenRaw = await runQwenValidation(geminiRaw || text, text, imageUrl, expectedCountHint || null);
     const parsed = normalizeQuestions(JSON.parse(extractFirstJsonArray(qwenRaw)));
+    logAi("PIPELINE", "Validation parsed questions", {
+      count: parsed.length,
+      elapsedMs: Date.now() - chunkStartedAt,
+    });
     return runMathSolving(parsed, text, imageUrl);
   } catch {
+    logAi("PIPELINE", "Generate chunk failed", {
+      elapsedMs: Date.now() - chunkStartedAt,
+    });
     return [];
   }
 }
 
 export async function buildQuestionsFromUploads(files: File[], manualText: string) {
+  const startedAt = Date.now();
   const hardLimit = HARD_SAFETY_MAX_QUESTIONS;
   const texts: string[] = [];
   const sources: Array<{ name: string; chars: number; kind: "image" | "pdf" | "text" }> = [];
   const all: GeneratedQuestion[] = [];
 
   for (const file of files) {
+    const fileStartedAt = Date.now();
+    logAi("PIPELINE", "File processing started", {
+      fileName: file.name,
+      fileType: file.type,
+      fileSize: file.size,
+    });
     try {
       const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
       const kind = (isPdf ? "pdf" : "image") as "image" | "pdf";
@@ -843,22 +966,52 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
       }
     } catch (error) {
       console.warn(`AI import failed for ${file.name}:`, error);
+      logAi("PIPELINE", "File processing failed", {
+        fileName: file.name,
+        elapsedMs: Date.now() - fileStartedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
+
+    logAi("PIPELINE", "File processing finished", {
+      fileName: file.name,
+      elapsedMs: Date.now() - fileStartedAt,
+      accumulatedQuestions: all.length,
+    });
 
     if (all.length >= hardLimit) break;
   }
 
   if (manualText.trim()) {
     const trimmed = manualText.trim();
+    const manualStartedAt = Date.now();
     texts.push(trimmed);
     sources.push({ name: "text-input", chars: trimmed.length, kind: "text" as const });
 
-    const chunks = chunkText(trimmed.slice(0, MAX_TEXT_LENGTH));
-    for (const chunk of chunks) {
-      const fromText = await generateQuestionsFromChunk(chunk);
-      all.push(...fromText);
-      if (all.length >= hardLimit) break;
+    // Fast path: try heuristic parsing first for clean pasted text (e.g. Câu 1, Câu 2...)
+    const heuristicFromText = extractHeuristicQuestions(trimmed, hardLimit);
+    const estimatedFromText = estimateQuestionCountFromText(trimmed);
+    const isDev = process.env.NODE_ENV !== "production";
+
+    if (heuristicFromText.length > 0 && heuristicFromText.length >= Math.max(estimatedFromText * 0.7, 1)) {
+      // Good heuristic parse → just solve answers with AI, skip structuring step
+      if (isDev) console.info("[AI Generate] Fast heuristic path for text input", { count: heuristicFromText.length });
+      const solved = await runMathSolving(heuristicFromText, trimmed, null);
+      all.push(...solved);
+    } else {
+      // Fallback: go through full AI structuring pipeline
+      const chunks = chunkText(trimmed.slice(0, MAX_TEXT_LENGTH));
+      for (const chunk of chunks) {
+        const fromText = await generateQuestionsFromChunk(chunk);
+        all.push(...fromText);
+        if (all.length >= hardLimit) break;
+      }
     }
+
+    logAi("PIPELINE", "Manual text processing finished", {
+      elapsedMs: Date.now() - manualStartedAt,
+      accumulatedQuestions: all.length,
+    });
   }
 
   if (texts.length === 0) {
@@ -922,6 +1075,12 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
       finalQuestions = await applyDoubleCheckAnswers(finalQuestions);
     }
   }
+
+  logAi("PIPELINE", "Build questions completed", {
+    totalQuestions: finalQuestions.length,
+    sourceCount: sources.length,
+    elapsedMs: Date.now() - startedAt,
+  });
 
   return {
     cleanedText,
