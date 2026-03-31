@@ -331,7 +331,7 @@ export const AssignmentQuestion = memo(function AssignmentQuestion({
                 <div className="flex items-start sm:items-center gap-3 sm:gap-4 flex-1">
                   <span className={clsx("flex h-6 w-6 items-center justify-center rounded-lg text-xs font-black", isDark ? "bg-slate-700 text-slate-400" : "bg-slate-200 text-slate-600")}>{String.fromCharCode(97 + si)}</span>
                   <span className={clsx("text-sm sm:text-[15px] font-medium pt-0.5 sm:pt-0", isDark ? "text-slate-300" : "text-slate-800")}>
-                    {sq.content || <em className="not-italic opacity-50">Câu {String.fromCharCode(97 + si)}</em>}
+                    {sq.content ? <MathText text={sq.content} /> : <em className="not-italic opacity-50">Câu {String.fromCharCode(97 + si)}</em>}
                   </span>
                 </div>
                 <div className="flex gap-2 self-end sm:self-auto ml-9 sm:ml-0">

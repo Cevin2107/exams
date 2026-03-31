@@ -180,9 +180,7 @@ export function QuestionBuilderTab({ assignmentId, initialQuestions }: { assignm
                   {q.points > 0 && <span className="text-sm font-semibold text-slate-500">{q.points} điểm</span>}
                 </div>
                 
-                <p className="text-base font-semibold text-slate-900 leading-relaxed max-w-3xl">
-                  <MathText text={q.content || ""} />
-                </p>
+                <p className="text-base font-semibold text-slate-900 leading-relaxed max-w-3xl"><MathText text={q.content || ""} /></p>
 
                 {(q.imageUrl || q.image_url) && <img src={q.imageUrl || q.image_url} alt="img" className="mt-3 max-w-xs rounded-xl border border-slate-200" />}
 

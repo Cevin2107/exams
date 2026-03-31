@@ -26,9 +26,7 @@ export const QuestionRenderer: React.FC<QuestionRendererProps> = React.memo(({
           <span className="text-2xl">💡</span>
           <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest">Đoạn văn / Ghi chú</span>
         </div>
-        <h3 className="text-sm md:text-base font-semibold text-indigo-100 leading-relaxed">
-          <MathText text={question.content || ""} />
-        </h3>
+        <h3 className="text-sm md:text-base font-semibold text-indigo-100 leading-relaxed"><MathText text={question.content || ""} /></h3>
         {question.imageUrl && (
           <img src={question.imageUrl} alt="Lý thuyết" className="mt-4 max-w-full rounded-xl shadow-lg border border-indigo-500/20 max-h-80 object-contain" />
         )}
@@ -60,9 +58,7 @@ export const QuestionRenderer: React.FC<QuestionRendererProps> = React.memo(({
 
           <div className="flex-1 min-w-0">
             {/* Question text */}
-            <p className="text-base font-semibold text-white leading-relaxed mb-5">
-              <MathText text={question.content || ""} />
-            </p>
+            <p className="text-base font-semibold text-white leading-relaxed mb-5"><MathText text={question.content || ""} /></p>
 
             {question.imageUrl && (
               <img src={question.imageUrl} alt="Câu hỏi" className="mb-5 max-w-full rounded-xl shadow-md border border-white/10 max-h-80 object-contain bg-black/20" />
@@ -100,9 +96,7 @@ export const QuestionRenderer: React.FC<QuestionRendererProps> = React.memo(({
                         <span className={`shrink-0 flex h-6 w-6 items-center justify-center rounded-lg text-xs font-black transition-all ${
                           isSelected ? "bg-indigo-500 text-white" : "bg-white/10 text-slate-400"
                         }`}>{letter}</span>
-                        <span className={`text-sm md:text-base leading-snug mt-0.5 ${isSelected ? "text-indigo-100 font-medium" : "text-slate-300"}`}>
-                          <MathText text={choice || ""} />
-                        </span>
+                        <span className={`text-sm md:text-base leading-snug mt-0.5 ${isSelected ? "text-indigo-100 font-medium" : "text-slate-300"}`}><MathText text={choice || ""} /></span>
                       </div>
                     </label>
                   );

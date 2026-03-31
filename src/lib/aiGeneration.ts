@@ -1,80 +1,22 @@
 import sharp from "sharp";
 
+const GROQ_TEXT_MODEL = "llama-3.1-8b-instant";
+const STEPFUN_TEXT_MODEL = "stepfun/step-3.5-flash:free";
+const OPENROUTER_TEXT_MODEL = process.env.AI_QUESTION_PARSER_MODEL || STEPFUN_TEXT_MODEL;
+const OPENROUTER_TEXT_MODELS = (process.env.AI_QUESTION_PARSER_MODELS || `${OPENROUTER_TEXT_MODEL},google/gemma-3-27b-it:free`)
+  .split(",")
+  .map((x) => x.trim())
+  .filter(Boolean);
 const PUTER_OPENAI_BASE_URL = "https://api.puter.com/puterai/openai/v1/chat/completions";
-const NEMOTRON_VL_MODEL = "nvidia/nemotron-nano-12b-v2-vl";
-const GEMINI_MODEL = "google/gemini-2.5-flash";
-const QWEN_VL_MODEL = "qwen/qwen-vl-max";
-const GPT4O_MINI_MODEL = "openai/gpt-4o-mini";
-const GPT41_MINI_MODEL = "openai/gpt-4.1-mini";
-const QWEN_FREE_MODEL = "qwen/qwen3-4b:free";
-const QWEN36_PLUS_PREVIEW_FREE_MODEL = "qwen/qwen3.6-plus-preview:free";
-const GEMMA_FREE_MODEL = "google/gemma-3n-e2b-it:free";
-const LIQUID_THINKING_FREE_MODEL = "liquid/lfm-2.5-1.2b-thinking:free";
-const ARCEE_FREE_MODEL = "arcee-ai/trinity-large-preview:free";
-const O3_MINI_MODEL = "openai/o3-mini";
-const DEEPSEEK_REASONER_MODEL = "deepseek/deepseek-reasoner";
-const DEEPSEEK_R1_DISTILL_QWEN32_MODEL = "deepseek/deepseek-r1-distill-qwen-32b";
-const QWQ32_MODEL = "qwen/qwq-32b";
-const QWEN3_THINKING_30B_MODEL = "qwen/qwen3-30b-a3b-thinking-2507";
-const O4_MINI_MODEL = "openai/o4-mini";
-const MATH_SOLVER_MODEL = process.env.PUTER_SOLVER_MODEL || QWEN36_PLUS_PREVIEW_FREE_MODEL;
-const PUTER_TIMEOUT_MS = Number(process.env.PUTER_TIMEOUT_MS || 25000);
-const SOLVER_CONCURRENCY = Math.max(1, Number(process.env.PUTER_SOLVER_CONCURRENCY || 3));
+const PUTER_TEXT_MODEL = process.env.AI_QUESTION_PUTER_MODEL || "qwen/qwen3.6-plus-preview:free";
+const PUTER_TEXT_MODELS = (process.env.AI_QUESTION_PUTER_MODELS || `${PUTER_TEXT_MODEL},arcee-ai/trinity-large-preview:free`)
+  .split(",")
+  .map((x) => x.trim())
+  .filter(Boolean);
+const OCR_SPACE_API_URL = "https://api.ocr.space/parse/image";
 
-function isAiDebugEnabled() {
-  return process.env.NODE_ENV !== "production" || process.env.PUTER_DEBUG === "1";
-}
-
-function logAi(stage: string, message: string, payload?: Record<string, unknown>) {
-  if (!isAiDebugEnabled()) return;
-  if (payload) {
-    console.info(`[AI][${stage}] ${message}`, payload);
-    return;
-  }
-  console.info(`[AI][${stage}] ${message}`);
-}
-
-function getModelList(envName: string, defaults: string[]) {
-  const fromEnv = process.env[envName]?.split(",").map((x) => x.trim()).filter(Boolean);
-  return (fromEnv && fromEnv.length > 0) ? fromEnv : defaults;
-}
-
-const OCR_FALLBACK_MODELS = getModelList("PUTER_OCR_MODELS", [
-  GEMMA_FREE_MODEL,
-]);
-
-const STRUCTURE_FALLBACK_MODELS = getModelList("PUTER_STRUCTURE_MODELS", [
-  QWEN_FREE_MODEL,
-  GEMMA_FREE_MODEL,
-  ARCEE_FREE_MODEL,
-  LIQUID_THINKING_FREE_MODEL,
-]);
-
-const VALIDATION_FALLBACK_MODELS = getModelList("PUTER_VALIDATION_MODELS", [
-  QWEN_FREE_MODEL,
-  GEMMA_FREE_MODEL,
-  ARCEE_FREE_MODEL,
-  LIQUID_THINKING_FREE_MODEL,
-]);
-
-const MATH_SOLVER_FALLBACK_MODELS = getModelList("PUTER_SOLVER_MODELS", [
-  MATH_SOLVER_MODEL,
-  DEEPSEEK_REASONER_MODEL,
-  DEEPSEEK_R1_DISTILL_QWEN32_MODEL,
-  QWQ32_MODEL,
-  QWEN3_THINKING_30B_MODEL,
-  O3_MINI_MODEL,
-  O4_MINI_MODEL,
-  QWEN_FREE_MODEL,
-  GEMMA_FREE_MODEL,
-  ARCEE_FREE_MODEL,
-  LIQUID_THINKING_FREE_MODEL,
-]);
-
-const MAX_TEXT_LENGTH = 12000;
-const TEXT_CHUNK_SIZE = 5000;
-const HARD_SAFETY_MAX_QUESTIONS = 300;
-const QUESTIONS_PER_CHUNK = 80;
+const MAX_TEXT_LENGTH = 15000;
+const TEXT_CHUNK_SIZE = 3500;
 
 // OCR optimization settings
 const MAX_IMAGE_WIDTH = 1600; // Giảm kích thước để tăng tốc OCR
@@ -82,6 +24,15 @@ const MAX_IMAGE_HEIGHT = 1600;
 const JPEG_QUALITY = 85;
 
 type HttpError = Error & { status?: number; details?: string };
+
+function aiLog(level: "info" | "warn" | "error", stage: string, message: string, meta?: Record<string, unknown>) {
+  const prefix = `[AI][${stage}] ${message}`;
+  if (meta) {
+    console[level](prefix, meta);
+    return;
+  }
+  console[level](prefix);
+}
 
 export interface GeneratedQuestion {
   question: string;
@@ -92,19 +43,15 @@ export interface GeneratedQuestion {
 interface OcrResult {
   text: string;
   source: string;
-  imageUrl?: string;
 }
 
-type VisionTextPart = { type: "text"; text: string };
-type VisionImagePart = { type: "image_url"; image_url: { url: string } };
-type OpenAiMessage = {
-  role: "system" | "user" | "assistant";
-  content: string | Array<VisionTextPart | VisionImagePart>;
-};
+interface ExtractedQuestion extends GeneratedQuestion {
+  source_index?: number;
+}
 
 async function optimizeImage(file: File): Promise<Buffer> {
   const buffer = Buffer.from(await file.arrayBuffer());
-
+  
   // Resize và compress ảnh để tăng tốc OCR
   const optimized = await sharp(buffer)
     .resize(MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT, {
@@ -113,175 +60,48 @@ async function optimizeImage(file: File): Promise<Buffer> {
     })
     .jpeg({ quality: JPEG_QUALITY })
     .toBuffer();
-
+  
   return optimized;
 }
 
-function buildImageDataUrl(imageBuffer: Buffer) {
-  return `data:image/jpeg;base64,${imageBuffer.toString("base64")}`;
-}
+async function callOcrSpaceApi(imageBuffer: Buffer): Promise<string> {
+  const apiKey = process.env.OCR_SPACE_API_KEY || "K87899142388957";
+  const base64Image = `data:image/jpeg;base64,${imageBuffer.toString("base64")}`;
+  
+  const formData = new URLSearchParams();
+  formData.append("base64Image", base64Image);
+  formData.append("isOverlayRequired", "false");
+  formData.append("apikey", apiKey);
+  formData.append("OCREngine", "2");
+  formData.append("scale", "true"); // Auto-scale để tăng độ chính xác
+  formData.append("isTable", "false"); // Tắt table detection để nhanh hơn
 
-async function callPuterChat(messages: OpenAiMessage[], model: string, maxTokens = 2200, temperature = 0.1) {
-  const token = process.env.PUTER_AUTH_TOKEN;
-  if (!token) {
-    throw new Error("Thiếu PUTER_AUTH_TOKEN");
-  }
-
-  const startedAt = Date.now();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), PUTER_TIMEOUT_MS);
-
-  logAi("PUTER", "Request started", {
-    model,
-    maxTokens,
-    temperature,
-    timeoutMs: PUTER_TIMEOUT_MS,
+  const res = await fetch(OCR_SPACE_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: formData.toString(),
   });
 
-  let res: Response;
-  try {
-    res = await fetch(PUTER_OPENAI_BASE_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        model,
-        temperature,
-        max_tokens: maxTokens,
-        messages,
-      }),
-      signal: controller.signal,
-    });
-  } catch (error) {
-    clearTimeout(timeout);
-    const elapsedMs = Date.now() - startedAt;
-    if (error instanceof Error && error.name === "AbortError") {
-      const timeoutError: HttpError = Object.assign(
-        new Error(`Puter timeout after ${PUTER_TIMEOUT_MS}ms for model ${model}`),
-        { status: 408 }
-      );
-      logAi("PUTER", "Request timeout", { model, elapsedMs });
-      throw timeoutError;
-    }
-    logAi("PUTER", "Request failed before response", {
-      model,
-      elapsedMs,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-
   if (!res.ok) {
-    const body = await res.text();
-    logAi("PUTER", "Request failed", {
-      model,
-      status: res.status,
-      elapsedMs: Date.now() - startedAt,
-    });
-    const message = res.status === 401
-      ? "Puter 401 (PUTER_AUTH_TOKEN không hợp lệ hoặc chưa nạp)"
-      : res.status === 402
-        ? "Puter 402 (hết credit hoặc model chưa được cấp quyền)"
-        : `Puter chat error: ${res.status}`;
-    const error: HttpError = Object.assign(new Error(message), { details: body, status: res.status });
-    throw error;
+    throw new Error(`OCR.space error ${res.status}: ${await res.text()}`);
   }
 
   const data = await res.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (typeof content === "string") {
-    const trimmed = content.trim();
-    if (!trimmed) throw new Error(`Puter empty content from model ${model}`);
-    logAi("PUTER", "Request success", {
-      model,
-      elapsedMs: Date.now() - startedAt,
-      contentLength: trimmed.length,
-    });
-    return trimmed;
+  
+  if (data.IsErroredOnProcessing) {
+    const errorMsg = data.ErrorMessage?.[0] || "Unknown OCR error";
+    throw new Error(`OCR failed: ${errorMsg}`);
   }
-
-  if (Array.isArray(content)) {
-    const text = content
-      .map((part: { text?: string }) => part?.text || "")
-      .join("\n")
-      .trim();
-    if (!text) throw new Error(`Puter empty array content from model ${model}`);
-    logAi("PUTER", "Request success (array content)", {
-      model,
-      elapsedMs: Date.now() - startedAt,
-      contentLength: text.length,
-    });
-    return text;
-  }
-
-  throw new Error("Puter không trả về nội dung hợp lệ");
+  
+  const text = data.ParsedResults?.[0]?.ParsedText?.trim();
+  if (!text) throw new Error("Empty OCR result");
+  
+  return text;
 }
 
-async function callWithModelFallback(
-  messages: OpenAiMessage[],
-  models: string[],
-  maxTokens: number,
-  temperature: number
-) {
-  let lastError: unknown = null;
-  const attempts: string[] = [];
-  const startedAt = Date.now();
 
-  logAi("FALLBACK", "Start model fallback", {
-    modelCount: models.length,
-    maxTokens,
-    temperature,
-  });
-
-  for (const model of models) {
-    const modelStartedAt = Date.now();
-    try {
-      const content = await callPuterChat(messages, model, maxTokens, temperature);
-      logAi("FALLBACK", "Model selected", {
-        model,
-        tryMs: Date.now() - modelStartedAt,
-        totalMs: Date.now() - startedAt,
-      });
-      return { content, model };
-    } catch (error) {
-      lastError = error;
-      const httpError = error as HttpError;
-      attempts.push(`${model}:${httpError?.status || "ERR"}`);
-      logAi("FALLBACK", "Model failed", {
-        model,
-        status: httpError?.status || "ERR",
-        tryMs: Date.now() - modelStartedAt,
-      });
-    }
-  }
-
-  logAi("FALLBACK", "All models failed", {
-    attempts,
-    totalMs: Date.now() - startedAt,
-  });
-
-  if ((lastError as HttpError)?.status === 402) {
-    throw new Error(`Puter 402: Các model đang hết credit/chưa được cấp quyền (${attempts.join(", ")})`);
-  }
-
-  throw lastError instanceof Error ? lastError : new Error("All fallback models failed");
-}
-
-function extractFirstJsonArray(raw: string) {
-  const fenced = raw.match(/```json\s*([\s\S]*?)\s*```/i);
-  if (fenced?.[1]) return fenced[1].trim();
-
-  const start = raw.indexOf("[");
-  const end = raw.lastIndexOf("]");
-  if (start !== -1 && end !== -1 && end > start) {
-    return raw.slice(start, end + 1);
-  }
-  return raw;
-}
 
 async function extractPdfText(file: File) {
   const pdfParseModule = await import("pdf-parse");
@@ -292,41 +112,16 @@ async function extractPdfText(file: File) {
 }
 
 async function ocrFile(file: File): Promise<OcrResult> {
-  const isDev = process.env.NODE_ENV !== "production";
   const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
   if (isPdf) {
     const text = await extractPdfText(file);
     return { text, source: file.name };
   }
 
-  // OCR thô bằng model vision (Nemotron) theo pipeline Puter
+  // Optimize ảnh trước khi OCR để tăng tốc
   const optimizedBuffer = await optimizeImage(file);
-  const imageUrl = buildImageDataUrl(optimizedBuffer);
-
-  const ocrAttempt = await callWithModelFallback(
-    [
-      {
-        role: "system",
-        content: "Bạn là OCR engine cho đề thi. Chỉ chép lại nội dung nhìn thấy từ ảnh. Giữ nguyên ký hiệu toán học, không tự giải, không thêm diễn giải.",
-      },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "Trích xuất toàn bộ chữ trong ảnh, ưu tiên đúng ký hiệu toán học." },
-          { type: "image_url", image_url: { url: imageUrl } },
-        ],
-      },
-    ],
-    OCR_FALLBACK_MODELS,
-    2400,
-    0
-  );
-
-  if (isDev) {
-    console.info("[AI OCR] Model", { model: ocrAttempt.model });
-  }
-
-  return { text: ocrAttempt.content, source: file.name, imageUrl };
+  const text = await callOcrSpaceApi(optimizedBuffer);
+  return { text, source: file.name };
 }
 
 function cleanOcrText(chunks: string[]): string {
@@ -362,105 +157,59 @@ function chunkText(text: string) {
   return chunks;
 }
 
-function estimateQuestionCountFromText(text: string) {
-  const byCau = text.match(/(?:^|\n)\s*Câu\s*\d+[\.:\)\-\s]*/gim)?.length || 0;
-  const byNumbering = text.match(/(?:^|\n)\s*\d+[\.)]\s+/gm)?.length || 0;
-  return Math.max(byCau, byNumbering);
+function extractJsonArray(raw: string) {
+  const match = raw.match(/\[([\s\S]*?)\]/);
+  return match ? match[0] : raw;
 }
 
-function extractHeuristicQuestions(rawText: string, limit: number): GeneratedQuestion[] {
-  const text = rawText.replace(/\r/g, "").trim();
-  if (!text) return [];
-
-  // Split by common Vietnamese question markers: "Câu 1", "1.", "1)"
-  const chunks = text
-    .split(/\n(?=(?:Câu\s*\d+|\d+[\.)]))/i)
-    .map((x) => x.trim())
-    .filter(Boolean);
-
-  const results: GeneratedQuestion[] = [];
-
-  for (const chunk of chunks) {
-    const lines = chunk.split("\n").map((x) => x.trim()).filter(Boolean);
-    if (lines.length < 3) continue;
-
-    const optionMap: Partial<Record<"A" | "B" | "C" | "D", string>> = {};
-    const questionLines: string[] = [];
-
-    for (const line of lines) {
-      const optionMatch = line.match(/^([ABCD])[\.)\:\-\s]+(.+)$/i);
-      if (optionMatch) {
-        const key = optionMatch[1].toUpperCase() as "A" | "B" | "C" | "D";
-        optionMap[key] = optionMatch[2].trim();
-      } else {
-        questionLines.push(line);
-      }
+function detectQuestionIndices(text: string): number[] {
+  const regex = /(?:^|\n)\s*(?:Câu\s*)?(\d{1,3})\s*[\).:-]/gim;
+  const found = new Set<number>();
+  let match: RegExpExecArray | null = regex.exec(text);
+  while (match) {
+    const num = Number.parseInt(match[1], 10);
+    if (Number.isFinite(num) && num > 0) {
+      found.add(num);
     }
-
-    if (!optionMap.A || !optionMap.B || !optionMap.C || !optionMap.D) continue;
-
-    const question = questionLines
-      .join(" ")
-      .replace(/^Câu\s*\d+[\.:\)\-\s]*/i, "")
-      .replace(/^\d+[\.)\-\s]*/, "")
-      .trim();
-
-    if (!question) continue;
-
-    results.push({
-      question,
-      options: {
-        A: optionMap.A,
-        B: optionMap.B,
-        C: optionMap.C,
-        D: optionMap.D,
-      },
-      correct_answer: "A",
-    });
-
-    if (results.length >= limit) break;
+    match = regex.exec(text);
   }
-
-  return results;
+  return Array.from(found).sort((a, b) => a - b);
 }
 
-function normalizeQuestionKey(text: string) {
-  return text
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .replace(/[\u00A0]/g, " ")
-    .trim();
-}
+function estimateQuestionCountInChunk(text: string): number {
+  const byIndices = detectQuestionIndices(text).length;
 
-function mergeQuestionsPreferExisting(base: GeneratedQuestion[], supplement: GeneratedQuestion[]) {
-  const seen = new Set(base.map((q) => normalizeQuestionKey(q.question)));
-  const merged = [...base];
+  const countA = (text.match(/(?:^|\n)\s*A\s*[\).:-]\s+\S/gim) || []).length;
+  const countB = (text.match(/(?:^|\n)\s*B\s*[\).:-]\s+\S/gim) || []).length;
+  const countC = (text.match(/(?:^|\n)\s*C\s*[\).:-]\s+\S/gim) || []).length;
+  const countD = (text.match(/(?:^|\n)\s*D\s*[\).:-]\s+\S/gim) || []).length;
+  const byOptionSets = Math.min(countA, countB, countC, countD);
 
-  for (const q of supplement) {
-    const key = normalizeQuestionKey(q.question);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    merged.push(q);
-  }
+  // Fallback heuristic by text length when numbering/options are noisy.
+  const byLength = Math.max(1, Math.ceil(text.length / 320));
 
-  return merged;
+  const estimated = Math.max(byIndices, byOptionSets, byLength);
+  return Math.max(1, estimated);
 }
 
 type AiQuestionPayload = {
+  source_index?: unknown;
   question?: unknown;
   options?: Record<string, unknown>;
   correct_answer?: unknown;
 };
 
-function normalizeQuestions(raw: unknown): GeneratedQuestion[] {
+function normalizeQuestions(raw: unknown): ExtractedQuestion[] {
   if (!Array.isArray(raw)) return [];
-  return raw
-    .map((candidate) => {
+  const normalized = raw
+    .map<ExtractedQuestion | null>((candidate) => {
       const q = candidate as AiQuestionPayload;
+      const sourceIndexRaw = q.source_index;
       const question = q.question?.toString().trim();
       const optionsRecord = q.options || {};
       const correctRaw = q.correct_answer?.toString().trim().toUpperCase();
       if (!question) return null;
+      const sourceIndex = Number.parseInt(sourceIndexRaw?.toString() || "", 10);
       const opt: Record<"A" | "B" | "C" | "D", string> = {
         A: optionsRecord.A?.toString().trim() || "",
         B: optionsRecord.B?.toString().trim() || "",
@@ -472,546 +221,624 @@ function normalizeQuestions(raw: unknown): GeneratedQuestion[] {
         ? (correctRaw as "A" | "B" | "C" | "D")
         : firstNonEmpty;
       return {
+        ...(Number.isFinite(sourceIndex) && sourceIndex > 0 ? { source_index: sourceIndex } : {}),
         question,
         options: opt,
         correct_answer: correctAnswer,
-      } satisfies GeneratedQuestion;
+      } satisfies ExtractedQuestion;
     })
-    .filter((q): q is GeneratedQuestion => Boolean(q));
+    .filter((q): q is ExtractedQuestion => q !== null);
+
+  return normalized;
 }
 
-type SolvedAnswerPayload = {
-  index?: unknown;
-  question_index?: unknown;
-  correct_answer?: unknown;
-  answer?: unknown;
-  option?: unknown;
-};
+function hasLikelyBrokenLatex(text: string): boolean {
+  if (!text) return false;
+  const dollarCount = (text.match(/\$/g) || []).length;
+  if (dollarCount % 2 !== 0) return true;
 
-function normalizeOptionLetter(value: unknown): "A" | "B" | "C" | "D" | null {
-  const text = String(value || "").trim();
-  if (!text) return null;
+  const openInline = (text.match(/\\\(/g) || []).length;
+  const closeInline = (text.match(/\\\)/g) || []).length;
+  if (openInline !== closeInline) return true;
 
-  const upper = text.toUpperCase();
-  if (/^[ABCD]$/.test(upper)) return upper as "A" | "B" | "C" | "D";
+  const openDisplay = (text.match(/\\\[/g) || []).length;
+  const closeDisplay = (text.match(/\\\]/g) || []).length;
+  if (openDisplay !== closeDisplay) return true;
 
-  const jsonField = upper.match(/"(?:CORRECT_ANSWER|ANSWER|OPTION)"\s*:\s*"([ABCD])"/);
-  if (jsonField?.[1]) return jsonField[1] as "A" | "B" | "C" | "D";
-
-  const labeled = upper.match(/(?:DAP\s*AN|\u0110AP\s*AN|CHON|CH\u1eccN|ANSWER|CORRECT_ANSWER)\s*[:\-]?\s*([ABCD])\b/);
-  if (labeled?.[1]) return labeled[1] as "A" | "B" | "C" | "D";
-
-  const trailingLetter = upper.match(/\b([ABCD])\b\s*$/);
-  if (trailingLetter?.[1]) return trailingLetter[1] as "A" | "B" | "C" | "D";
-
-  return null;
+  return false;
 }
 
-function uniqueAnswerCount(questions: GeneratedQuestion[]) {
-  return new Set(questions.map((q) => q.correct_answer)).size;
+function needsLatexRepair(questions: ExtractedQuestion[]): boolean {
+  return questions.some((q) => {
+    if (hasLikelyBrokenLatex(q.question)) return true;
+    return Object.values(q.options).some((opt) => hasLikelyBrokenLatex(opt));
+  });
 }
 
-function stripSolvedFields(questions: GeneratedQuestion[]) {
-  return questions.map((q, index) => ({
-    index,
-    question: q.question,
-    options: q.options,
-  }));
+function extractAssistantText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object" && "text" in part) {
+          const text = (part as { text?: unknown }).text;
+          return typeof text === "string" ? text : "";
+        }
+        return "";
+      })
+      .join("\n")
+      .trim();
+  }
+  return "";
 }
 
-function applySolvedAnswers(
-  questions: GeneratedQuestion[],
-  solvedRaw: unknown
-): GeneratedQuestion[] {
-  if (!Array.isArray(solvedRaw)) return questions;
+async function callPuterQuestionExtractionModel(prompt: string): Promise<ExtractedQuestion[]> {
+  const puterToken = process.env.PUTER_AUTH_TOKEN;
+  if (!puterToken) {
+    aiLog("warn", "PUTER-EXTRACT", "Skip Puter: missing PUTER_AUTH_TOKEN (server-side Puter API requires auth)");
+    return [];
+  }
+  let lastError: HttpError | null = null;
 
-  const answerByIndex = new Map<number, "A" | "B" | "C" | "D">();
-  let hasZeroBasedIndex = false;
-  const oneBasedBuffer: Array<{ idx: number; ans: "A" | "B" | "C" | "D" }> = [];
+  for (const model of PUTER_TEXT_MODELS) {
+    aiLog("info", "PUTER-EXTRACT", "Trying model", { model });
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (puterToken) {
+      headers.Authorization = `Bearer ${puterToken}`;
+    }
 
-  for (const item of solvedRaw) {
-    const row = item as SolvedAnswerPayload;
-    const idxRaw = row.index ?? row.question_index;
-    const idx = Number(idxRaw);
-    const ans = normalizeOptionLetter(row.correct_answer ?? row.answer ?? row.option);
-    if (!Number.isFinite(idx)) continue;
-    if (!ans) continue;
+    const res = await fetch(PUTER_OPENAI_BASE_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        max_tokens: 1800,
+        messages: [
+          {
+            role: "system",
+            content:
+              "Bạn là bộ trích xuất câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ, không thêm chữ ngoài JSON. Giữ nguyên tiếng Việt và giữ nguyên ký hiệu LaTeX (ví dụ $...$, \\\\(...\\\\), \\\\[...\\\\], \\\\frac).",
+          },
+          { role: "user", content: prompt },
+        ],
+      }),
+    });
 
-    if (idx === 0) {
-      hasZeroBasedIndex = true;
-      answerByIndex.set(0, ans);
+    if (!res.ok) {
+      const body = await res.text();
+      aiLog("warn", "PUTER-EXTRACT", "Model failed", { model, status: res.status });
+      lastError = Object.assign(new Error(`Puter ${model} error: ${res.status}`), {
+        details: body,
+        status: res.status,
+      }) as HttpError;
       continue;
     }
 
-    if (idx > 0) {
-      oneBasedBuffer.push({ idx, ans });
+    const data = await res.json();
+    const raw = extractAssistantText(data.choices?.[0]?.message?.content || "");
+    try {
+      const parsed = normalizeQuestions(JSON.parse(extractJsonArray(raw)));
+      if (parsed.length > 0) {
+        aiLog("info", "PUTER-EXTRACT", "Model succeeded", { model, questions: parsed.length });
+        return parsed;
+      }
+    } catch {
+      // Try next Puter model.
     }
   }
 
-  if (hasZeroBasedIndex) {
-    for (const row of oneBasedBuffer) {
-      answerByIndex.set(row.idx, row.ans);
+  if (lastError) throw lastError;
+  return [];
+}
+
+async function callQuestionExtractionModel(prompt: string, preferredModel?: string): Promise<ExtractedQuestion[]> {
+  let puterFailure: HttpError | null = null;
+  let openRouterFailure: HttpError | null = null;
+
+  // 1) Puter first
+  try {
+    aiLog("info", "EXTRACT", "Trying Puter first");
+    const puterParsed = await callPuterQuestionExtractionModel(prompt);
+    if (puterParsed.length > 0) {
+      aiLog("info", "EXTRACT", "Puter primary succeeded", { questions: puterParsed.length });
+      return puterParsed;
+    }
+  } catch (error) {
+    puterFailure = error as HttpError;
+    aiLog("warn", "EXTRACT", "Puter primary failed, fallback to OpenRouter", {
+      status: puterFailure.status,
+      message: puterFailure.message,
+    });
+  }
+
+  // 2) OpenRouter fallback
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  if (openRouterKey) {
+    aiLog("info", "EXTRACT", "Trying OpenRouter fallback");
+    const modelsToTry = [preferredModel, ...OPENROUTER_TEXT_MODELS].filter(
+      (m, idx, arr): m is string => Boolean(m) && arr.indexOf(m) === idx
+    );
+
+    let lastError: HttpError | null = null;
+
+    for (const model of modelsToTry) {
+      aiLog("info", "OPENROUTER-EXTRACT", "Trying model", { model });
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${openRouterKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          max_tokens: 1800,
+          messages: [
+            {
+              role: "system",
+              content:
+                "Bạn là bộ trích xuất câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ, không thêm chữ ngoài JSON. Giữ nguyên tiếng Việt và giữ nguyên ký hiệu LaTeX (ví dụ $...$, \\\\(...\\\\), \\\\[...\\\\], \\\\frac).",
+            },
+            { role: "user", content: prompt },
+          ],
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        aiLog("warn", "OPENROUTER-EXTRACT", "Model failed", { model, status: res.status });
+        lastError = Object.assign(new Error(`OpenRouter ${model} error: ${res.status}`), { details: body, status: res.status });
+        continue;
+      }
+
+      const data = await res.json();
+      const raw = data.choices?.[0]?.message?.content || "";
+      try {
+        const parsed = normalizeQuestions(JSON.parse(extractJsonArray(raw)));
+        if (parsed.length > 0) {
+          aiLog("info", "OPENROUTER-EXTRACT", "Model succeeded", { model, questions: parsed.length });
+          return parsed;
+        }
+      } catch {
+        // Try next model.
+      }
+    }
+
+    if (lastError) {
+      const message = lastError.status === 401 ? "OpenRouter 401 (OPENROUTER_API_KEY không hợp lệ hoặc chưa nạp)" : (lastError.message || "OpenRouter error");
+      aiLog("warn", "EXTRACT", "OpenRouter failed, fallback to Groq", {
+        status: lastError.status,
+        message,
+      });
+      openRouterFailure = Object.assign(new Error(message), { details: lastError.details, status: lastError.status }) as HttpError;
     }
   } else {
-    for (const row of oneBasedBuffer) {
-      const zeroBased = row.idx - 1;
-      if (zeroBased >= 0) answerByIndex.set(zeroBased, row.ans);
-    }
+    aiLog("warn", "EXTRACT", "OPENROUTER_API_KEY missing, skip OpenRouter");
   }
 
-  return questions.map((q, idx) => ({
-    ...q,
-    correct_answer: answerByIndex.get(idx) || q.correct_answer,
-  }));
-}
-
-async function solveOneQuestion(
-  question: GeneratedQuestion,
-  _inputText: string,
-  _imageUrl: string | null
-): Promise<"A" | "B" | "C" | "D" | null> {
-  const isDev = isAiDebugEnabled();
-  const questionForSolve = {
-    question: question.question,
-    options: question.options,
-  };
-
-  const userParts: Array<VisionTextPart | VisionImagePart> = [
-    {
-      type: "text",
-      text: `Giải câu hỏi trắc nghiệm sau và chỉ trả về một ký tự duy nhất: A hoặc B hoặc C hoặc D.\n\nCâu hỏi JSON:\n${JSON.stringify(questionForSolve)}\n\nKhông thêm bất kỳ ký tự nào khác ngoài A/B/C/D.`,
-    },
-  ];
-
-  try {
-    const messages: OpenAiMessage[] = [
-      {
-        role: "system",
-        content: "Bạn là chuyên gia giải toán trắc nghiệm. Chỉ trả về 1 ký tự A/B/C/D.",
-      },
-      { role: "user", content: userParts },
-    ];
-
-    const firstAttempt = await callWithModelFallback(
-      messages,
-      MATH_SOLVER_FALLBACK_MODELS,
-      200,
-      0
-    );
-
-    if (isDev) {
-      console.info("[AI Solver] Single question model", {
-        model: firstAttempt.model,
-      });
-    }
-
-    const firstPass = normalizeOptionLetter(firstAttempt.content);
-    if (firstPass) return firstPass;
-    if (isDev) {
-      console.info("[AI Solver] Single question first pass ambiguous", {
-        preview: firstAttempt.content.slice(0, 120),
-      });
-    }
-
-    const retryAttempt = await callWithModelFallback(
-      [
-        {
-          role: "system",
-          content: "Trả về đúng 1 ký tự duy nhất trong tập A,B,C,D. Không giải thích.",
-        },
-        {
-          role: "user",
-          content: `Chỉ trả về đúng 1 ký tự A/B/C/D cho câu hỏi này:\n${JSON.stringify(questionForSolve)}`,
-        },
-      ],
-      MATH_SOLVER_FALLBACK_MODELS,
-      40,
-      0
-    );
-
-    if (isDev) {
-      console.info("[AI Solver] Single question retry model", {
-        model: retryAttempt.model,
-      });
-    }
-
-    const retryParsed = normalizeOptionLetter(retryAttempt.content);
-    if (isDev && !retryParsed) {
-      console.info("[AI Solver] Single question retry failed", {
-        preview: retryAttempt.content.slice(0, 120),
-      });
-    }
-    return retryParsed;
-  } catch {
-    return null;
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    if (puterFailure) throw puterFailure;
+    if (openRouterFailure) throw openRouterFailure;
+    throw new Error("Thiếu GROQ_API_KEY");
   }
-}
 
-async function applyDoubleCheckAnswers(
-  questions: GeneratedQuestion[]
-): Promise<GeneratedQuestion[]> {
-  if (questions.length < 3) return questions;
+  // 3) Groq fallback
+  aiLog("info", "EXTRACT", "Trying Groq fallback", { model: GROQ_TEXT_MODEL });
 
-  logAi("SOLVER", "Double-check answers started", {
-    questionCount: questions.length,
-    concurrency: SOLVER_CONCURRENCY,
-  });
-
-  const checked = [...questions];
-  await runWithConcurrency(checked.length, SOLVER_CONCURRENCY, async (i) => {
-    const ans = await solveOneQuestion(checked[i], "", null);
-    if (ans) checked[i].correct_answer = ans;
-  });
-
-  logAi("SOLVER", "Double-check answers finished", {
-    questionCount: checked.length,
-  });
-
-  return checked;
-}
-
-async function runWithConcurrency(
-  total: number,
-  concurrency: number,
-  worker: (index: number) => Promise<void>
-) {
-  let nextIndex = 0;
-  const workers = Array.from({ length: Math.min(concurrency, total) }, async () => {
-    while (true) {
-      const current = nextIndex;
-      nextIndex += 1;
-      if (current >= total) break;
-      await worker(current);
-    }
-  });
-
-  await Promise.all(workers);
-}
-
-async function runMathSolving(
-  questions: GeneratedQuestion[],
-  _inputText: string,
-  _imageUrl: string | null
-): Promise<GeneratedQuestion[]> {
-  if (questions.length === 0) return questions;
-  const isDev = isAiDebugEnabled();
-  const solvingStartedAt = Date.now();
-  logAi("SOLVER", "Batch solving started", {
-    questionCount: questions.length,
-    concurrency: SOLVER_CONCURRENCY,
-  });
-  const solvePayload = stripSolvedFields(questions);
-
-  const userParts: Array<VisionTextPart | VisionImagePart> = [
-    {
-      type: "text",
-      text: `Hãy GIẢI từng câu trắc nghiệm và chọn đáp án đúng duy nhất (A/B/C/D).\n\nDanh sách câu hỏi JSON (không chứa đáp án):\n${JSON.stringify(solvePayload)}\n\nTrả về JSON mảng có đúng số phần tử tương ứng:\n[{"index":0,"correct_answer":"A"}]\n\nQuy tắc:\n- index là vị trí phần tử trong mảng câu hỏi (bắt đầu từ 0).\n- correct_answer chỉ nhận A/B/C/D.\n- Chỉ trả về JSON, không thêm giải thích hay markdown.`,
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
     },
-  ];
-
-  try {
-    const batchAttempt = await callWithModelFallback(
-      [
+    body: JSON.stringify({
+      model: GROQ_TEXT_MODEL,
+      temperature: 0,
+      max_tokens: 1800,
+      messages: [
         {
           role: "system",
           content:
-            "Bạn là chuyên gia giải toán trắc nghiệm. Nhiệm vụ là tính toán và chọn đáp án đúng. Không phỏng đoán khi thiếu dữ kiện.",
+            "Bạn là bộ trích xuất câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ, không thêm chữ ngoài JSON. Giữ nguyên tiếng Việt và giữ nguyên ký hiệu LaTeX (ví dụ $...$, \\\\(...\\\\), \\\\[...\\\\], \\\\frac).",
         },
-        { role: "user", content: userParts },
+        { role: "user", content: prompt },
       ],
-      MATH_SOLVER_FALLBACK_MODELS,
-      1000,
-      0
-    );
-
-    if (isDev) {
-      console.info("[AI Solver] Batch solve model", {
-        model: batchAttempt.model,
-      });
-    }
-
-    const solvedParsed = JSON.parse(extractFirstJsonArray(batchAttempt.content));
-    const solvedBatch = applySolvedAnswers(questions, solvedParsed);
-
-    const changedCount = solvedBatch.reduce((acc, q, idx) => {
-      return acc + (q.correct_answer !== questions[idx]?.correct_answer ? 1 : 0);
-    }, 0);
-
-    const suspiciousBatch =
-      changedCount === 0 ||
-      (questions.length >= 3 && uniqueAnswerCount(solvedBatch) === 1);
-
-    if (isDev) {
-      console.info("[AI Solver] Batch solve summary", {
-        questionCount: questions.length,
-        changedCount,
-        uniqueAnswers: uniqueAnswerCount(solvedBatch),
-        suspiciousBatch,
-      });
-    }
-
-    if (!suspiciousBatch) return solvedBatch;
-
-    const fallbackSolved = [...solvedBatch];
-    await runWithConcurrency(fallbackSolved.length, SOLVER_CONCURRENCY, async (i) => {
-      const answer = await solveOneQuestion(fallbackSolved[i], "", null);
-      if (answer) fallbackSolved[i].correct_answer = answer;
-    });
-
-    if (fallbackSolved.length >= 3 && uniqueAnswerCount(fallbackSolved) === 1) {
-      const doubleChecked = await applyDoubleCheckAnswers(fallbackSolved);
-      if (uniqueAnswerCount(doubleChecked) > 1) {
-        logAi("SOLVER", "Batch solving finished with double-check", {
-          questionCount: doubleChecked.length,
-          elapsedMs: Date.now() - solvingStartedAt,
-        });
-        return doubleChecked;
-      }
-    }
-
-    logAi("SOLVER", "Batch solving finished with per-question fallback", {
-      questionCount: fallbackSolved.length,
-      elapsedMs: Date.now() - solvingStartedAt,
-    });
-
-    return fallbackSolved;
-  } catch {
-    if (isDev) {
-      console.info("[AI Solver] Batch solve failed, switching to per-question fallback");
-    }
-    const fallbackSolved = [...questions];
-    await runWithConcurrency(fallbackSolved.length, SOLVER_CONCURRENCY, async (i) => {
-      const answer = await solveOneQuestion(fallbackSolved[i], "", null);
-      if (answer) fallbackSolved[i].correct_answer = answer;
-    });
-
-    if (fallbackSolved.length >= 3 && uniqueAnswerCount(fallbackSolved) === 1) {
-      const doubleChecked = await applyDoubleCheckAnswers(fallbackSolved);
-      if (uniqueAnswerCount(doubleChecked) > 1) {
-        logAi("SOLVER", "Batch solving recovered after error", {
-          questionCount: doubleChecked.length,
-          elapsedMs: Date.now() - solvingStartedAt,
-        });
-        return doubleChecked;
-      }
-    }
-
-    logAi("SOLVER", "Batch solving finished after error fallback", {
-      questionCount: fallbackSolved.length,
-      elapsedMs: Date.now() - solvingStartedAt,
-    });
-
-    return fallbackSolved;
-  }
-}
-
-async function runGeminiStructuring(inputText: string, imageUrl: string | null, expectedCountHint: number | null) {
-  const isDev = process.env.NODE_ENV !== "production";
-  const expectedLine = expectedCountHint && expectedCountHint > 0
-    ? `\n- Nguồn có đánh số khoảng ${expectedCountHint} câu, hãy trả đủ số câu đọc được (không được cắt thiếu).`
-    : "";
-  const userParts: Array<VisionTextPart | VisionImagePart> = [
-    {
-      type: "text",
-      text: `Nguồn dữ liệu OCR/latex:\n${inputText}\n\nHãy TRÍCH XUẤT ĐẦY ĐỦ toàn bộ câu hỏi trắc nghiệm A/B/C/D có trong nguồn này, không được bỏ sót câu nào.${expectedLine}\nYêu cầu bắt buộc:\n- Nếu nguồn đã chứa câu hỏi dạng LaTeX, giữ nguyên công thức và cấu trúc toán học, không diễn giải lại thành văn xuôi.\n- Giữ nguyên ký hiệu toán học, chuẩn hoá về LaTeX khi có biểu thức.\n- Với phân số, ưu tiên dạng \\frac{tu}{mau}, không dùng kiểu a/b nếu đó là phân số toán học.\n- Không tự thêm dữ kiện không có trong ảnh/text.\n- Nếu ký hiệu mờ thì bỏ qua câu đó.\n- Chỉ trả về JSON mảng theo schema: [{"question":"...","options":{"A":"...","B":"...","C":"...","D":"..."},"correct_answer":"A"}]`,
-    },
-  ];
-
-  if (imageUrl) {
-    userParts.push({ type: "image_url", image_url: { url: imageUrl } });
-  }
-
-  const structureAttempt = await callWithModelFallback(
-    [
-      {
-        role: "system",
-        content: "Bạn là hệ thống trích xuất câu hỏi từ đề thi. Chỉ trả về JSON hợp lệ, không có chữ thừa.",
-      },
-      { role: "user", content: userParts },
-    ],
-    STRUCTURE_FALLBACK_MODELS,
-    1800,
-    0.1
-  );
-
-  if (isDev) {
-    console.info("[AI Generate] Structuring model", { model: structureAttempt.model });
-  }
-
-  return structureAttempt.content;
-}
-
-async function runQwenValidation(
-  geminiJsonRaw: string,
-  inputText: string,
-  imageUrl: string | null,
-  expectedCountHint: number | null
-) {
-  const isDev = process.env.NODE_ENV !== "production";
-  const expectedLine = expectedCountHint && expectedCountHint > 0
-    ? `\nNguồn đang có khoảng ${expectedCountHint} câu đánh số, tuyệt đối không làm thiếu câu khi hậu kiểm.`
-    : "";
-  const userParts: Array<VisionTextPart | VisionImagePart> = [
-    {
-      type: "text",
-      text: `Hãy kiểm tra và sửa JSON câu hỏi sau để khớp nguồn dữ liệu, nhất là ký hiệu toán. Giữ đủ toàn bộ câu trắc nghiệm có trong nguồn, không cắt giảm số câu.\n\nJSON ứng viên:\n${geminiJsonRaw}\n\nNguồn OCR:\n${inputText}${expectedLine}\n\nBắt buộc chuẩn hoá biểu thức theo LaTeX; với phân số phải dùng \\frac{...}{...} khi phù hợp, tránh để dạng a/b.\n\nTrả về JSON mảng hợp lệ duy nhất theo schema chuẩn, không thêm giải thích.`,
-    },
-  ];
-
-  if (imageUrl) {
-    userParts.push({ type: "image_url", image_url: { url: imageUrl } });
-  }
-
-  const validationAttempt = await callWithModelFallback(
-    [
-      {
-        role: "system",
-        content: "Bạn là bộ hậu kiểm OCR Toán. Chỉ trả về JSON mảng hợp lệ theo schema câu hỏi trắc nghiệm.",
-      },
-      { role: "user", content: userParts },
-    ],
-    VALIDATION_FALLBACK_MODELS,
-    1800,
-    0
-  );
-
-  if (isDev) {
-    console.info("[AI Generate] Validation model", { model: validationAttempt.model });
-  }
-
-  return validationAttempt.content;
-}
-
-async function generateQuestionsFromChunk(text: string, imageUrl: string | null = null): Promise<GeneratedQuestion[]> {
-  const chunkStartedAt = Date.now();
-  logAi("PIPELINE", "Generate chunk started", {
-    textLength: text.length,
-    hasImage: Boolean(imageUrl),
+    }),
   });
 
-  let geminiRaw = "";
-  const expectedCountHint = estimateQuestionCountFromText(text);
+  if (!res.ok) {
+    const body = await res.text();
+    const openRouterHint = openRouterFailure?.status === 429
+      ? " | OpenRouter đang bị rate limit 429"
+      : "";
+    const puterHint = puterFailure ? " | Puter fallback thất bại" : "";
+    const message = res.status === 401
+      ? "Groq text 401 (GROQ_API_KEY không hợp lệ hoặc chưa nạp)"
+      : `Groq text error: ${res.status}${openRouterHint}${puterHint}`;
 
-  try {
-    geminiRaw = await runGeminiStructuring(text, imageUrl, expectedCountHint || null);
-  } catch {
-    // Không fail ngay; thử nhánh hậu kiểm/generate khác bên dưới
-  }
-
-  if (geminiRaw) {
-    try {
-      const parsed = normalizeQuestions(JSON.parse(extractFirstJsonArray(geminiRaw)));
-      if (parsed.length > 0) {
-        logAi("PIPELINE", "Structuring parsed questions", {
-          count: parsed.length,
-          elapsedMs: Date.now() - chunkStartedAt,
-        });
-        return runMathSolving(parsed, text, imageUrl);
-      }
-    } catch {
-      // Fallback qua bước hậu kiểm nếu parse lỗi
+    const detailLines: string[] = [];
+    if (openRouterFailure?.details) {
+      detailLines.push(`OpenRouter failure: ${openRouterFailure.details}`);
     }
+    if (puterFailure?.details) {
+      detailLines.push(`Puter failure: ${puterFailure.details}`);
+    }
+    detailLines.push(`Groq failure: ${body}`);
+
+    const error: HttpError = Object.assign(new Error(message), {
+      details: detailLines.join("\n"),
+      status: res.status,
+    });
+    aiLog("error", "EXTRACT", "Groq fallback failed", { status: res.status });
+    throw error;
   }
 
+  const data = await res.json();
+  const raw = data.choices?.[0]?.message?.content || "";
   try {
-    const qwenRaw = await runQwenValidation(geminiRaw || text, text, imageUrl, expectedCountHint || null);
-    const parsed = normalizeQuestions(JSON.parse(extractFirstJsonArray(qwenRaw)));
-    logAi("PIPELINE", "Validation parsed questions", {
-      count: parsed.length,
-      elapsedMs: Date.now() - chunkStartedAt,
-    });
-    return runMathSolving(parsed, text, imageUrl);
+    const parsed = normalizeQuestions(JSON.parse(extractJsonArray(raw)));
+    aiLog("info", "EXTRACT", "Groq fallback succeeded", { questions: parsed.length });
+    return parsed;
   } catch {
-    logAi("PIPELINE", "Generate chunk failed", {
-      elapsedMs: Date.now() - chunkStartedAt,
-    });
     return [];
   }
 }
 
-export async function buildQuestionsFromUploads(files: File[], manualText: string) {
-  const startedAt = Date.now();
-  const hardLimit = HARD_SAFETY_MAX_QUESTIONS;
-  const texts: string[] = [];
-  const sources: Array<{ name: string; chars: number; kind: "image" | "pdf" | "text" }> = [];
-  const all: GeneratedQuestion[] = [];
+type AnswerResolutionPayload = {
+  index?: unknown;
+  correct_answer?: unknown;
+  answer?: unknown;
+};
 
-  for (const file of files) {
-    const fileStartedAt = Date.now();
-    logAi("PIPELINE", "File processing started", {
-      fileName: file.name,
-      fileType: file.type,
-      fileSize: file.size,
-    });
-    try {
-      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-      const kind = (isPdf ? "pdf" : "image") as "image" | "pdf";
-      const { text, source, imageUrl } = await ocrFile(file);
+function normalizeOptionLetter(value: unknown): "A" | "B" | "C" | "D" | null {
+  const text = String(value || "").trim().toUpperCase();
+  if (["A", "B", "C", "D"].includes(text)) return text as "A" | "B" | "C" | "D";
+  return null;
+}
 
-      if (!text.trim()) continue;
+function parseResolvedAnswers(raw: string, questionCount: number): Array<"A" | "B" | "C" | "D" | null> {
+  let parsed: unknown = [];
+  try {
+    parsed = JSON.parse(extractJsonArray(raw));
+  } catch {
+    return Array.from({ length: questionCount }, () => null);
+  }
 
-      texts.push(text);
-      sources.push({ name: source, chars: text.length, kind });
+  if (!Array.isArray(parsed)) return Array.from({ length: questionCount }, () => null);
 
-      if (kind === "image") {
-        const fromImage = await generateQuestionsFromChunk(text.slice(0, MAX_TEXT_LENGTH), imageUrl || null);
-        all.push(...fromImage);
-      } else {
-        const chunks = chunkText(text.slice(0, MAX_TEXT_LENGTH));
-        for (const chunk of chunks) {
-          const fromPdf = await generateQuestionsFromChunk(chunk);
-          all.push(...fromPdf);
-          if (all.length >= hardLimit) break;
-        }
-      }
-    } catch (error) {
-      console.warn(`AI import failed for ${file.name}:`, error);
-      logAi("PIPELINE", "File processing failed", {
-        fileName: file.name,
-        elapsedMs: Date.now() - fileStartedAt,
-        error: error instanceof Error ? error.message : String(error),
+  const resolved = Array.from<"A" | "B" | "C" | "D" | null>({ length: questionCount }).fill(null);
+  for (const row of parsed) {
+    const candidate = row as AnswerResolutionPayload;
+    const idx = Number(candidate.index);
+    const answer = normalizeOptionLetter(candidate.correct_answer ?? candidate.answer);
+    if (!Number.isFinite(idx)) continue;
+    if (idx < 0 || idx >= questionCount) continue;
+    if (!answer) continue;
+    resolved[idx] = answer;
+  }
+
+  return resolved;
+}
+
+async function resolveAnswersWithAi(
+  questions: ExtractedQuestion[],
+  sourceText: string,
+  preferredModel?: string
+): Promise<ExtractedQuestion[]> {
+  if (questions.length === 0) return questions;
+
+  const solvePrompt = `Hãy GIẢI và chọn đáp án đúng cho từng câu hỏi trắc nghiệm dưới đây.
+Không được bỏ sót câu nào.
+Chỉ trả về JSON mảng theo schema:
+[
+  {"index": 0, "correct_answer": "A"}
+]
+
+Danh sách câu hỏi:
+${JSON.stringify(questions.map((q, index) => ({ index, question: q.question, options: q.options })))}
+
+Văn bản nguồn để đối chiếu:
+${sourceText}`;
+
+  aiLog("info", "SOLVE", "Start resolving answers", { questions: questions.length });
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  const modelsToTry = [preferredModel, ...OPENROUTER_TEXT_MODELS].filter(
+    (m, idx, arr): m is string => Boolean(m) && arr.indexOf(m) === idx
+  );
+
+  let openRouterFailure: HttpError | null = null;
+  let puterFailure: HttpError | null = null;
+
+  // 1) Puter solve first.
+  const puterToken = process.env.PUTER_AUTH_TOKEN;
+  if (!puterToken) {
+    aiLog("warn", "PUTER-SOLVE", "Skip Puter solve first: missing PUTER_AUTH_TOKEN (server-side Puter API requires auth)");
+  } else {
+    for (const model of PUTER_TEXT_MODELS) {
+      aiLog("info", "PUTER-SOLVE", "Trying model", { model });
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${puterToken}`,
+      };
+
+      const res = await fetch(PUTER_OPENAI_BASE_URL, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          max_tokens: 1000,
+          messages: [
+            {
+              role: "system",
+              content: "Bạn là bộ giải câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ theo schema index/correct_answer.",
+            },
+            { role: "user", content: solvePrompt },
+          ],
+        }),
       });
+
+      if (!res.ok) {
+        const body = await res.text();
+        puterFailure = Object.assign(new Error(`Puter ${model} solve error: ${res.status}`), {
+          status: res.status,
+          details: body,
+        }) as HttpError;
+        aiLog("warn", "PUTER-SOLVE", "Model failed", { model, status: res.status });
+        continue;
+      }
+
+      const data = await res.json();
+      const raw = extractAssistantText(data.choices?.[0]?.message?.content || "");
+      const resolved = parseResolvedAnswers(raw, questions.length);
+      if (resolved.some(Boolean)) {
+        aiLog("info", "PUTER-SOLVE", "Model succeeded", { model });
+        return questions.map((q, idx) => ({
+          ...q,
+          correct_answer: resolved[idx] || q.correct_answer,
+        }));
+      }
+    }
+  }
+
+  // 2) OpenRouter solve fallback.
+  if (openRouterKey) {
+    for (const model of modelsToTry) {
+      aiLog("info", "OPENROUTER-SOLVE", "Trying model", { model });
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${openRouterKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          max_tokens: 1000,
+          messages: [
+            {
+              role: "system",
+              content: "Bạn là bộ giải câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ theo schema index/correct_answer.",
+            },
+            { role: "user", content: solvePrompt },
+          ],
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        openRouterFailure = Object.assign(new Error(`OpenRouter ${model} solve error: ${res.status}`), {
+          status: res.status,
+          details: body,
+        }) as HttpError;
+        aiLog("warn", "OPENROUTER-SOLVE", "Model failed", { model, status: res.status });
+        continue;
+      }
+
+      const data = await res.json();
+      const raw = extractAssistantText(data.choices?.[0]?.message?.content || "");
+      const resolved = parseResolvedAnswers(raw, questions.length);
+      if (resolved.some(Boolean)) {
+        aiLog("info", "OPENROUTER-SOLVE", "Model succeeded", { model });
+        return questions.map((q, idx) => ({
+          ...q,
+          correct_answer: resolved[idx] || q.correct_answer,
+        }));
+      }
+    }
+  } else {
+    aiLog("warn", "OPENROUTER-SOLVE", "OPENROUTER_API_KEY missing, skip OpenRouter solve");
+  }
+
+  // 3) Groq solve fallback.
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey) {
+    aiLog("warn", "GROQ-SOLVE", "GROQ_API_KEY missing, skip Groq solve");
+    return questions;
+  }
+
+  aiLog("info", "GROQ-SOLVE", "Trying Groq solve fallback", { model: GROQ_TEXT_MODEL });
+  const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${groqKey}`,
+    },
+    body: JSON.stringify({
+      model: GROQ_TEXT_MODEL,
+      temperature: 0,
+      max_tokens: 1000,
+      messages: [
+        {
+          role: "system",
+          content: "Bạn là bộ giải câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ theo schema index/correct_answer.",
+        },
+        { role: "user", content: solvePrompt },
+      ],
+    }),
+  });
+
+  if (!groqRes.ok) {
+    const body = await groqRes.text();
+    aiLog("error", "GROQ-SOLVE", "Groq solve failed", { status: groqRes.status });
+    const detail: string[] = [];
+    if (openRouterFailure?.details) detail.push(`OpenRouter solve failure: ${openRouterFailure.details}`);
+    if (puterFailure?.details) detail.push(`Puter solve failure: ${puterFailure.details}`);
+    detail.push(`Groq solve failure: ${body}`);
+    throw Object.assign(new Error(`Không thể giải đáp án bằng cả 3 AI (Groq status ${groqRes.status})`), {
+      details: detail.join("\n"),
+      status: groqRes.status,
+    }) as HttpError;
+  }
+
+  const groqData = await groqRes.json();
+  const groqRaw = extractAssistantText(groqData.choices?.[0]?.message?.content || "");
+  const groqResolved = parseResolvedAnswers(groqRaw, questions.length);
+  if (groqResolved.some(Boolean)) {
+    aiLog("info", "GROQ-SOLVE", "Groq solve succeeded", { solved: groqResolved.filter(Boolean).length });
+    return questions.map((q, idx) => ({
+      ...q,
+      correct_answer: groqResolved[idx] || q.correct_answer,
+    }));
+  }
+
+  aiLog("warn", "SOLVE", "All solver providers returned no usable answer mapping; keeping current answers");
+  return questions;
+}
+
+async function generateQuestionsFromChunk(text: string, limit: number): Promise<ExtractedQuestion[]> {
+  const indices = detectQuestionIndices(text);
+  const expected = indices.slice(0, limit);
+  const extractionPrompt = `Nhiệm vụ: bóc tách các câu trắc nghiệm có sẵn từ văn bản, KHÔNG tự sáng tác câu mới.
+
+Yêu cầu bắt buộc:
+1) Giữ nguyên tiếng Việt và giữ nguyên LaTeX trong question/options.
+2) Mỗi câu phải có đủ options A/B/C/D (nếu thiếu thì để chuỗi rỗng).
+3) Nếu không chắc đáp án đúng thì đặt correct_answer = "A".
+4) Nếu thấy chỉ số câu trong đề (ví dụ Câu 1, 2.), điền vào source_index.
+5) Nếu có danh sách chỉ số bên dưới, phải trả đủ các chỉ số đó, không bỏ sót.
+
+Schema JSON:
+[
+  {
+    "source_index": 1,
+    "question": "...",
+    "options": {"A": "...", "B": "...", "C": "...", "D": "..."},
+    "correct_answer": "A"
+  }
+]
+
+Chỉ số nhận diện được: ${expected.length ? expected.join(", ") : "(không nhận diện được chỉ số rõ ràng)"}
+Giới hạn tối đa ${limit} câu trong lần trả lời này.
+
+Văn bản nguồn:
+${text}`;
+
+  aiLog("info", "PIPELINE", "Start extraction for chunk", { chunkChars: text.length, limit });
+  const extracted = await callQuestionExtractionModel(extractionPrompt);
+  const picked = extracted.slice(0, limit);
+
+  let merged: ExtractedQuestion[] = picked;
+
+  if (expected.length > 0) {
+    const seen = new Set<number>();
+    for (const q of picked) {
+      if (q.source_index) seen.add(q.source_index);
     }
 
-    logAi("PIPELINE", "File processing finished", {
-      fileName: file.name,
-      elapsedMs: Date.now() - fileStartedAt,
-      accumulatedQuestions: all.length,
-    });
+    const missing = expected.filter((idx) => !seen.has(idx));
+    if (missing.length > 0) {
+      aiLog("warn", "PIPELINE", "Detected missing questions, running recovery", { missing: missing.join(",") });
+      const recoveryPrompt = `Bạn đã bỏ sót một số câu. Chỉ trả về JSON cho các câu có source_index thuộc danh sách sau: ${missing.join(", ")}.
+Không trả lại các câu đã có. Giữ nguyên tiếng Việt và LaTeX.
 
-    if (all.length >= hardLimit) break;
+Schema JSON:
+[
+  {
+    "source_index": 1,
+    "question": "...",
+    "options": {"A": "...", "B": "...", "C": "...", "D": "..."},
+    "correct_answer": "A"
+  }
+]
+
+Văn bản nguồn:
+${text}`;
+
+      const recovered = await callQuestionExtractionModel(recoveryPrompt, STEPFUN_TEXT_MODEL);
+      merged = [...picked, ...recovered].reduce<ExtractedQuestion[]>((acc, q) => {
+        if (q.source_index && acc.some((it) => it.source_index === q.source_index)) return acc;
+        if (acc.some((it) => it.question === q.question)) return acc;
+        acc.push(q);
+        return acc;
+      }, []);
+    }
+  }
+
+  if (needsLatexRepair(merged)) {
+    aiLog("info", "PIPELINE", "Detected broken LaTeX, running repair with Stepfun");
+    const repairPrompt = `Sửa lỗi LaTeX cho các câu hỏi sau và giữ nguyên nghĩa tiếng Việt. Không bỏ sót câu nào, không thêm câu mới.
+Trả về JSON đúng schema cũ. Nếu có source_index thì giữ nguyên source_index.
+
+JSON hiện tại:
+${JSON.stringify(merged)}
+
+Văn bản nguồn để đối chiếu:
+${text}`;
+
+    const repaired = await callQuestionExtractionModel(repairPrompt, STEPFUN_TEXT_MODEL);
+    if (repaired.length > 0) {
+      merged = repaired.reduce<ExtractedQuestion[]>((acc, q) => {
+        if (q.source_index && acc.some((it) => it.source_index === q.source_index)) return acc;
+        if (acc.some((it) => it.question === q.question)) return acc;
+        acc.push(q);
+        return acc;
+      }, []);
+    }
+  }
+
+  // Mandatory step: solve and set answers before returning output.
+  const solved = await resolveAnswersWithAi(merged, text, STEPFUN_TEXT_MODEL);
+  aiLog("info", "PIPELINE", "Chunk completed", { extracted: solved.length });
+
+  return solved.slice(0, limit);
+}
+
+export async function buildQuestionsFromUploads(files: File[], manualText: string) {
+  const texts: string[] = [];
+  const sources: Array<{ name: string; chars: number; kind: "image" | "pdf" | "text" }> = [];
+
+  // Process multiple files in parallel để tăng tốc
+  const ocrResults = await Promise.all(
+    files.map(async (file) => {
+      try {
+        const { text, source } = await ocrFile(file);
+        const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+        return { text, source, kind: (isPdf ? "pdf" : "image") as "image" | "pdf" };
+      } catch (error) {
+        console.warn(`OCR failed for ${file.name}:`, error);
+        return null;
+      }
+    })
+  );
+
+  // Collect successful OCR results
+  for (const result of ocrResults) {
+    if (result && result.text) {
+      texts.push(result.text);
+      sources.push({ name: result.source, chars: result.text.length, kind: result.kind });
+    }
   }
 
   if (manualText.trim()) {
     const trimmed = manualText.trim();
-    const manualStartedAt = Date.now();
     texts.push(trimmed);
     sources.push({ name: "text-input", chars: trimmed.length, kind: "text" as const });
-
-    // Fast path: try heuristic parsing first for clean pasted text (e.g. Câu 1, Câu 2...)
-    const heuristicFromText = extractHeuristicQuestions(trimmed, hardLimit);
-    const estimatedFromText = estimateQuestionCountFromText(trimmed);
-    const isDev = process.env.NODE_ENV !== "production";
-
-    if (heuristicFromText.length > 0 && heuristicFromText.length >= Math.max(estimatedFromText * 0.7, 1)) {
-      // Good heuristic parse → just solve answers with AI, skip structuring step
-      if (isDev) console.info("[AI Generate] Fast heuristic path for text input", { count: heuristicFromText.length });
-      const solved = await runMathSolving(heuristicFromText, trimmed, null);
-      all.push(...solved);
-    } else {
-      // Fallback: go through full AI structuring pipeline
-      const chunks = chunkText(trimmed.slice(0, MAX_TEXT_LENGTH));
-      for (const chunk of chunks) {
-        const fromText = await generateQuestionsFromChunk(chunk);
-        all.push(...fromText);
-        if (all.length >= hardLimit) break;
-      }
-    }
-
-    logAi("PIPELINE", "Manual text processing finished", {
-      elapsedMs: Date.now() - manualStartedAt,
-      accumulatedQuestions: all.length,
-    });
   }
 
   if (texts.length === 0) {
@@ -1019,72 +846,93 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
   }
 
   const cleanedText = cleanOcrText(texts);
+  const chunks = chunkText(cleanedText);
+  const all: ExtractedQuestion[] = [];
 
-  // Fallback từ text gộp nếu trước đó chưa sinh được câu nào
-  if (all.length === 0) {
-    const chunks = chunkText(cleanedText);
-    for (const chunk of chunks) {
-      const questions = await generateQuestionsFromChunk(chunk);
-      all.push(...questions);
-      if (all.length >= hardLimit) break;
-    }
+  for (const chunk of chunks) {
+    const estimatedInChunk = estimateQuestionCountInChunk(chunk);
+    const chunkLimit = estimatedInChunk;
+    aiLog("info", "PIPELINE", "Chunk question estimate", {
+      chunkChars: chunk.length,
+      estimatedInChunk,
+      chunkLimit,
+    });
+
+    const questions = await generateQuestionsFromChunk(chunk, chunkLimit);
+    all.push(...questions);
   }
 
-  const unique = all.reduce<GeneratedQuestion[]>((acc, q) => {
-    if (acc.find((ex) => ex.question === q.question)) return acc;
+  const unique = all.reduce<ExtractedQuestion[]>((acc, q) => {
+    if (q.source_index && acc.find((ex) => ex.source_index === q.source_index)) return acc;
+    if (
+      acc.find(
+        (ex) =>
+          ex.question === q.question &&
+          ex.options.A === q.options.A &&
+          ex.options.B === q.options.B &&
+          ex.options.C === q.options.C &&
+          ex.options.D === q.options.D
+      )
+    ) {
+      return acc;
+    }
     acc.push(q);
     return acc;
   }, []);
 
-  const heuristicFromCleaned = extractHeuristicQuestions(cleanedText, hardLimit);
-  const estimatedCount = estimateQuestionCountFromText(cleanedText);
+  const expectedIndices = detectQuestionIndices(cleanedText);
+  if (expectedIndices.length > 0 && unique.length < expectedIndices.length) {
+    const seen = new Set<number>(unique.map((q) => q.source_index).filter((v): v is number => Number.isFinite(v)));
+    const missing = expectedIndices.filter((idx) => !seen.has(idx));
 
-  let finalQuestions = unique;
+    if (missing.length > 0) {
+      aiLog("warn", "PIPELINE", "Final global recovery for missing indices", { missing: missing.join(",") });
+      const recoveryPrompt = `Bạn đang khôi phục các câu còn thiếu theo source_index từ toàn bộ văn bản.
+Chỉ trả về các câu có source_index thuộc danh sách: ${missing.join(", ")}.
+Không trả lại câu đã có. Giữ nguyên tiếng Việt và LaTeX.
 
-  // Nếu AI trả thiếu rõ rệt thì ưu tiên parser cứng từ văn bản để giữ đủ câu.
-  if (heuristicFromCleaned.length > finalQuestions.length) {
-    const aiLooksIncomplete = finalQuestions.length === 0 || finalQuestions.length < Math.max(estimatedCount * 0.7, 8);
-    finalQuestions = aiLooksIncomplete
-      ? heuristicFromCleaned
-      : mergeQuestionsPreferExisting(finalQuestions, heuristicFromCleaned);
+Schema JSON:
+[
+  {
+    "source_index": 1,
+    "question": "...",
+    "options": {"A": "...", "B": "...", "C": "...", "D": "..."},
+    "correct_answer": "A"
+  }
+]
+
+Văn bản nguồn:
+${cleanedText}`;
+
+      const recovered = await callQuestionExtractionModel(recoveryPrompt, STEPFUN_TEXT_MODEL);
+      for (const q of recovered) {
+        if (q.source_index && unique.some((it) => it.source_index === q.source_index)) continue;
+        if (
+          unique.some(
+            (it) =>
+              it.question === q.question &&
+              it.options.A === q.options.A &&
+              it.options.B === q.options.B &&
+              it.options.C === q.options.C &&
+              it.options.D === q.options.D
+          )
+        ) {
+          continue;
+        }
+        unique.push(q);
+      }
+    }
   }
 
-  if (finalQuestions.length === 0) {
-    if (heuristicFromCleaned.length > 0) {
-      const solvedHeuristic = await runMathSolving(heuristicFromCleaned, cleanedText, null);
-      if (process.env.NODE_ENV !== "production") {
-        console.info("[AI Generate] Heuristic fallback used", {
-          count: solvedHeuristic.length,
-        });
-      }
-
-      return {
-        cleanedText,
-        questions: solvedHeuristic.slice(0, hardLimit),
-        sources,
-      };
-    }
-
+  if (unique.length === 0) {
     throw new Error("AI did not return any questions");
   }
 
-  const needResovleAnswers = finalQuestions.length <= 80 && uniqueAnswerCount(finalQuestions) <= 1;
-  if (needResovleAnswers) {
-    finalQuestions = await runMathSolving(finalQuestions, cleanedText, null);
-    if (finalQuestions.length >= 3 && uniqueAnswerCount(finalQuestions) === 1) {
-      finalQuestions = await applyDoubleCheckAnswers(finalQuestions);
-    }
-  }
-
-  logAi("PIPELINE", "Build questions completed", {
-    totalQuestions: finalQuestions.length,
-    sourceCount: sources.length,
-    elapsedMs: Date.now() - startedAt,
-  });
+  const questions = unique.map(({ source_index: _sourceIndex, ...rest }) => rest);
 
   return {
     cleanedText,
-    questions: finalQuestions.slice(0, hardLimit),
+    questions,
     sources,
   };
 }

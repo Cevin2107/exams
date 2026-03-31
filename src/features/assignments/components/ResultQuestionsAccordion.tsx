@@ -127,11 +127,7 @@ export function ResultQuestionsAccordion({
                         <img src={imgUrl} alt="Câu hỏi" className="max-h-64 w-auto object-contain bg-slate-50 dark:bg-slate-900 mx-auto" />
                       </div>
                     )}
-                    {q.content && (
-                      <p className="text-[15px] font-semibold text-slate-800 dark:text-slate-200 mt-4 mb-5 leading-relaxed">
-                        <MathText text={q.content} />
-                      </p>
-                    )}
+                    {q.content && <p className="text-[15px] font-semibold text-slate-800 dark:text-slate-200 mt-4 mb-5 leading-relaxed"><MathText text={q.content} /></p>}
 
                     {/* MCQ Choices */}
                     {q.type === "mcq" && (() => {
@@ -197,7 +193,7 @@ export function ResultQuestionsAccordion({
                         {!isCorrect && (q.answer_key || q.answerKey) && (
                           <div className="rounded-xl border border-emerald-200 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10 px-4 py-3">
                             <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-widest block mb-1">Đáp án gợi ý: </span>
-                            <span className="font-semibold text-[15px] text-emerald-900 dark:text-emerald-200">{q.answer_key || q.answerKey}</span>
+                            <span className="font-semibold text-[15px] text-emerald-900 dark:text-emerald-200"><MathText text={String(q.answer_key || q.answerKey)} /></span>
                           </div>
                         )}
                       </div>
@@ -233,7 +229,7 @@ export function ResultQuestionsAccordion({
                               )}>
                                 <span className="w-5 text-sm font-black text-slate-400 dark:text-slate-500 shrink-0">{String.fromCharCode(97 + si)}.</span>
                                 <span className={clsx("flex-1 font-medium leading-relaxed", subCorrect ? "text-emerald-900 dark:text-emerald-100" : "text-rose-900 dark:text-rose-100")}>
-                                  {sq.content || <em className="not-italic text-slate-400 dark:text-slate-500">Câu {String.fromCharCode(97 + si)}</em>}
+                                  {sq.content ? <MathText text={sq.content} /> : <em className="not-italic text-slate-400 dark:text-slate-500">Câu {String.fromCharCode(97 + si)}</em>}
                                 </span>
                                 <div className="flex items-center gap-3 shrink-0">
                                   <span className={clsx("rounded-md px-2.5 py-1 text-xs font-extrabold uppercase",

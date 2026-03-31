@@ -3,7 +3,7 @@ import { checkAdminAuth } from "@/lib/adminAuth";
 import { buildQuestionsFromUploads } from "@/lib/aiGeneration";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   const isAuth = await checkAdminAuth();
@@ -38,12 +38,9 @@ export async function POST(req: NextRequest) {
     const message = error instanceof Error ? error.message : "Unknown error";
     const errorWithDetails = error as { details?: string };
     const details = errorWithDetails?.details || undefined;
-    const isPuter402 = /Puter\s*402/i.test(message);
     return NextResponse.json(
       {
-        error: isPuter402
-          ? "Tài khoản Puter hiện không có quyền dùng các model mặc định. Hãy thêm model khả dụng vào PUTER_STRUCTURE_MODELS/PUTER_VALIDATION_MODELS/PUTER_SOLVER_MODELS trong .env.local rồi thử lại."
-          : (isDev ? message : "Không thể tạo câu hỏi bằng AI lúc này, vui lòng thử lại sau."),
+        error: isDev ? message : "Không thể tạo câu hỏi bằng AI lúc này, vui lòng thử lại sau.",
         details: isDev ? details : undefined,
       },
       { status: 500 }
