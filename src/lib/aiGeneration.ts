@@ -56,8 +56,8 @@ const MATH_SOLVER_FALLBACK_MODELS = getModelList("PUTER_SOLVER_MODELS", [
 
 const MAX_TEXT_LENGTH = 12000;
 const TEXT_CHUNK_SIZE = 5000;
-const MAX_QUESTIONS = 16;
-const QUESTIONS_PER_CHUNK = 8;
+const HARD_SAFETY_MAX_QUESTIONS = 300;
+const QUESTIONS_PER_CHUNK = 80;
 
 // OCR optimization settings
 const MAX_IMAGE_WIDTH = 1600; // Giảm kích thước để tăng tốc OCR
@@ -273,6 +273,12 @@ function chunkText(text: string) {
   return chunks;
 }
 
+function estimateQuestionCountFromText(text: string) {
+  const byCau = text.match(/(?:^|\n)\s*Câu\s*\d+[\.:\)\-\s]*/gim)?.length || 0;
+  const byNumbering = text.match(/(?:^|\n)\s*\d+[\.)]\s+/gm)?.length || 0;
+  return Math.max(byCau, byNumbering);
+}
+
 function extractHeuristicQuestions(rawText: string, limit: number): GeneratedQuestion[] {
   const text = rawText.replace(/\r/g, "").trim();
   if (!text) return [];
@@ -312,7 +318,6 @@ function extractHeuristicQuestions(rawText: string, limit: number): GeneratedQue
 
     if (!question) continue;
 
-    // Không có solver thì giữ mặc định A; UI admin có thể chỉnh trước khi lưu.
     results.push({
       question,
       options: {
@@ -328,6 +333,28 @@ function extractHeuristicQuestions(rawText: string, limit: number): GeneratedQue
   }
 
   return results;
+}
+
+function normalizeQuestionKey(text: string) {
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[\u00A0]/g, " ")
+    .trim();
+}
+
+function mergeQuestionsPreferExisting(base: GeneratedQuestion[], supplement: GeneratedQuestion[]) {
+  const seen = new Set(base.map((q) => normalizeQuestionKey(q.question)));
+  const merged = [...base];
+
+  for (const q of supplement) {
+    const key = normalizeQuestionKey(q.question);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(q);
+  }
+
+  return merged;
 }
 
 type AiQuestionPayload = {
@@ -385,8 +412,8 @@ function normalizeOptionLetter(value: unknown): "A" | "B" | "C" | "D" | null {
   const labeled = upper.match(/(?:DAP\s*AN|\u0110AP\s*AN|CHON|CH\u1eccN|ANSWER|CORRECT_ANSWER)\s*[:\-]?\s*([ABCD])\b/);
   if (labeled?.[1]) return labeled[1] as "A" | "B" | "C" | "D";
 
-  const optionPrefix = upper.match(/^\s*([ABCD])\s*[\)\.\:\-]/);
-  if (optionPrefix?.[1]) return optionPrefix[1] as "A" | "B" | "C" | "D";
+  const trailingLetter = upper.match(/\b([ABCD])\b\s*$/);
+  if (trailingLetter?.[1]) return trailingLetter[1] as "A" | "B" | "C" | "D";
 
   return null;
 }
@@ -531,6 +558,64 @@ async function solveOneQuestion(
   }
 }
 
+async function solveOneQuestionDoubleCheck(
+  question: GeneratedQuestion
+): Promise<"A" | "B" | "C" | "D" | null> {
+  const questionForSolve = {
+    question: question.question,
+    options: question.options,
+  };
+
+  try {
+    const strictAttempt = await callWithModelFallback(
+      [
+        {
+          role: "system",
+          content:
+            "Bạn là bộ chấm đáp án trắc nghiệm. Chỉ được trả về JSON object đúng schema: {\"correct_answer\":\"A\"}. Không thêm chữ khác.",
+        },
+        {
+          role: "user",
+          content: `Giải câu hỏi sau và trả về đúng JSON object duy nhất.\n${JSON.stringify(questionForSolve)}`,
+        },
+      ],
+      MATH_SOLVER_FALLBACK_MODELS,
+      120,
+      0
+    );
+
+    const raw = strictAttempt.content.trim();
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (jsonMatch?.[0]) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]) as { correct_answer?: unknown; answer?: unknown };
+        const ans = normalizeOptionLetter(parsed.correct_answer ?? parsed.answer);
+        if (ans) return ans;
+      } catch {
+        // fallback parse below
+      }
+    }
+
+    return normalizeOptionLetter(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function applyDoubleCheckAnswers(
+  questions: GeneratedQuestion[]
+): Promise<GeneratedQuestion[]> {
+  if (questions.length < 3) return questions;
+
+  const checked = [...questions];
+  for (let i = 0; i < checked.length; i += 1) {
+    const ans = await solveOneQuestionDoubleCheck(checked[i]);
+    if (ans) checked[i].correct_answer = ans;
+  }
+
+  return checked;
+}
+
 async function runMathSolving(
   questions: GeneratedQuestion[],
   _inputText: string,
@@ -596,6 +681,11 @@ async function runMathSolving(
       if (answer) fallbackSolved[i].correct_answer = answer;
     }
 
+    if (fallbackSolved.length >= 3 && uniqueAnswerCount(fallbackSolved) === 1) {
+      const doubleChecked = await applyDoubleCheckAnswers(fallbackSolved);
+      if (uniqueAnswerCount(doubleChecked) > 1) return doubleChecked;
+    }
+
     return fallbackSolved;
   } catch {
     if (isDev) {
@@ -606,16 +696,25 @@ async function runMathSolving(
       const answer = await solveOneQuestion(fallbackSolved[i], "", null);
       if (answer) fallbackSolved[i].correct_answer = answer;
     }
+
+    if (fallbackSolved.length >= 3 && uniqueAnswerCount(fallbackSolved) === 1) {
+      const doubleChecked = await applyDoubleCheckAnswers(fallbackSolved);
+      if (uniqueAnswerCount(doubleChecked) > 1) return doubleChecked;
+    }
+
     return fallbackSolved;
   }
 }
 
-async function runGeminiStructuring(inputText: string, imageUrl: string | null, limit: number) {
+async function runGeminiStructuring(inputText: string, imageUrl: string | null, expectedCountHint: number | null) {
   const isDev = process.env.NODE_ENV !== "production";
+  const expectedLine = expectedCountHint && expectedCountHint > 0
+    ? `\n- Nguồn có đánh số khoảng ${expectedCountHint} câu, hãy trả đủ số câu đọc được (không được cắt thiếu).`
+    : "";
   const userParts: Array<VisionTextPart | VisionImagePart> = [
     {
       type: "text",
-      text: `Nguồn dữ liệu OCR/latex:\n${inputText}\n\nHãy tạo tối đa ${limit} câu hỏi trắc nghiệm A/B/C/D bằng tiếng Việt từ nguồn này.\nYêu cầu bắt buộc:\n- Nếu nguồn đã chứa câu hỏi dạng LaTeX, giữ nguyên công thức và cấu trúc toán học, không diễn giải lại thành văn xuôi.\n- Giữ nguyên ký hiệu toán học, chuẩn hoá về LaTeX khi có biểu thức.\n- Với phân số, ưu tiên dạng \\frac{tu}{mau}, không dùng kiểu a/b nếu đó là phân số toán học.\n- Không tự thêm dữ kiện không có trong ảnh/text.\n- Nếu ký hiệu mờ thì bỏ qua câu đó.\n- Chỉ trả về JSON mảng theo schema: [{"question":"...","options":{"A":"...","B":"...","C":"...","D":"..."},"correct_answer":"A"}]`,
+      text: `Nguồn dữ liệu OCR/latex:\n${inputText}\n\nHãy TRÍCH XUẤT ĐẦY ĐỦ toàn bộ câu hỏi trắc nghiệm A/B/C/D có trong nguồn này, không được bỏ sót câu nào.${expectedLine}\nYêu cầu bắt buộc:\n- Nếu nguồn đã chứa câu hỏi dạng LaTeX, giữ nguyên công thức và cấu trúc toán học, không diễn giải lại thành văn xuôi.\n- Giữ nguyên ký hiệu toán học, chuẩn hoá về LaTeX khi có biểu thức.\n- Với phân số, ưu tiên dạng \\frac{tu}{mau}, không dùng kiểu a/b nếu đó là phân số toán học.\n- Không tự thêm dữ kiện không có trong ảnh/text.\n- Nếu ký hiệu mờ thì bỏ qua câu đó.\n- Chỉ trả về JSON mảng theo schema: [{"question":"...","options":{"A":"...","B":"...","C":"...","D":"..."},"correct_answer":"A"}]`,
     },
   ];
 
@@ -643,12 +742,20 @@ async function runGeminiStructuring(inputText: string, imageUrl: string | null, 
   return structureAttempt.content;
 }
 
-async function runQwenValidation(geminiJsonRaw: string, inputText: string, imageUrl: string | null) {
+async function runQwenValidation(
+  geminiJsonRaw: string,
+  inputText: string,
+  imageUrl: string | null,
+  expectedCountHint: number | null
+) {
   const isDev = process.env.NODE_ENV !== "production";
+  const expectedLine = expectedCountHint && expectedCountHint > 0
+    ? `\nNguồn đang có khoảng ${expectedCountHint} câu đánh số, tuyệt đối không làm thiếu câu khi hậu kiểm.`
+    : "";
   const userParts: Array<VisionTextPart | VisionImagePart> = [
     {
       type: "text",
-      text: `Hãy kiểm tra và sửa JSON câu hỏi sau để khớp nguồn dữ liệu, nhất là ký hiệu toán:\n\nJSON ứng viên:\n${geminiJsonRaw}\n\nNguồn OCR:\n${inputText}\n\nBắt buộc chuẩn hoá biểu thức theo LaTeX; với phân số phải dùng \\frac{...}{...} khi phù hợp, tránh để dạng a/b.\n\nTrả về JSON mảng hợp lệ duy nhất theo schema chuẩn, không thêm giải thích.`,
+      text: `Hãy kiểm tra và sửa JSON câu hỏi sau để khớp nguồn dữ liệu, nhất là ký hiệu toán. Giữ đủ toàn bộ câu trắc nghiệm có trong nguồn, không cắt giảm số câu.\n\nJSON ứng viên:\n${geminiJsonRaw}\n\nNguồn OCR:\n${inputText}${expectedLine}\n\nBắt buộc chuẩn hoá biểu thức theo LaTeX; với phân số phải dùng \\frac{...}{...} khi phù hợp, tránh để dạng a/b.\n\nTrả về JSON mảng hợp lệ duy nhất theo schema chuẩn, không thêm giải thích.`,
     },
   ];
 
@@ -676,11 +783,12 @@ async function runQwenValidation(geminiJsonRaw: string, inputText: string, image
   return validationAttempt.content;
 }
 
-async function generateQuestionsFromChunk(text: string, limit: number, imageUrl: string | null = null): Promise<GeneratedQuestion[]> {
+async function generateQuestionsFromChunk(text: string, imageUrl: string | null = null): Promise<GeneratedQuestion[]> {
   let geminiRaw = "";
+  const expectedCountHint = estimateQuestionCountFromText(text);
 
   try {
-    geminiRaw = await runGeminiStructuring(text, imageUrl, limit);
+    geminiRaw = await runGeminiStructuring(text, imageUrl, expectedCountHint || null);
   } catch {
     // Không fail ngay; thử nhánh hậu kiểm/generate khác bên dưới
   }
@@ -697,7 +805,7 @@ async function generateQuestionsFromChunk(text: string, limit: number, imageUrl:
   }
 
   try {
-    const qwenRaw = await runQwenValidation(geminiRaw || text, text, imageUrl);
+    const qwenRaw = await runQwenValidation(geminiRaw || text, text, imageUrl, expectedCountHint || null);
     const parsed = normalizeQuestions(JSON.parse(extractFirstJsonArray(qwenRaw)));
     return runMathSolving(parsed, text, imageUrl);
   } catch {
@@ -706,6 +814,7 @@ async function generateQuestionsFromChunk(text: string, limit: number, imageUrl:
 }
 
 export async function buildQuestionsFromUploads(files: File[], manualText: string) {
+  const hardLimit = HARD_SAFETY_MAX_QUESTIONS;
   const texts: string[] = [];
   const sources: Array<{ name: string; chars: number; kind: "image" | "pdf" | "text" }> = [];
   const all: GeneratedQuestion[] = [];
@@ -722,21 +831,21 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
       sources.push({ name: source, chars: text.length, kind });
 
       if (kind === "image") {
-        const fromImage = await generateQuestionsFromChunk(text.slice(0, MAX_TEXT_LENGTH), QUESTIONS_PER_CHUNK, imageUrl || null);
+        const fromImage = await generateQuestionsFromChunk(text.slice(0, MAX_TEXT_LENGTH), imageUrl || null);
         all.push(...fromImage);
       } else {
         const chunks = chunkText(text.slice(0, MAX_TEXT_LENGTH));
         for (const chunk of chunks) {
-          const fromPdf = await generateQuestionsFromChunk(chunk, QUESTIONS_PER_CHUNK);
+          const fromPdf = await generateQuestionsFromChunk(chunk);
           all.push(...fromPdf);
-          if (all.length >= MAX_QUESTIONS) break;
+          if (all.length >= hardLimit) break;
         }
       }
     } catch (error) {
       console.warn(`AI import failed for ${file.name}:`, error);
     }
 
-    if (all.length >= MAX_QUESTIONS) break;
+    if (all.length >= hardLimit) break;
   }
 
   if (manualText.trim()) {
@@ -746,9 +855,9 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
 
     const chunks = chunkText(trimmed.slice(0, MAX_TEXT_LENGTH));
     for (const chunk of chunks) {
-      const fromText = await generateQuestionsFromChunk(chunk, QUESTIONS_PER_CHUNK);
+      const fromText = await generateQuestionsFromChunk(chunk);
       all.push(...fromText);
-      if (all.length >= MAX_QUESTIONS) break;
+      if (all.length >= hardLimit) break;
     }
   }
 
@@ -762,9 +871,9 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
   if (all.length === 0) {
     const chunks = chunkText(cleanedText);
     for (const chunk of chunks) {
-      const questions = await generateQuestionsFromChunk(chunk, QUESTIONS_PER_CHUNK);
+      const questions = await generateQuestionsFromChunk(chunk);
       all.push(...questions);
-      if (all.length >= MAX_QUESTIONS) break;
+      if (all.length >= hardLimit) break;
     }
   }
 
@@ -774,18 +883,31 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
     return acc;
   }, []);
 
-  if (unique.length === 0) {
-    const heuristic = extractHeuristicQuestions(cleanedText, MAX_QUESTIONS);
-    if (heuristic.length > 0) {
+  const heuristicFromCleaned = extractHeuristicQuestions(cleanedText, hardLimit);
+  const estimatedCount = estimateQuestionCountFromText(cleanedText);
+
+  let finalQuestions = unique;
+
+  // Nếu AI trả thiếu rõ rệt thì ưu tiên parser cứng từ văn bản để giữ đủ câu.
+  if (heuristicFromCleaned.length > finalQuestions.length) {
+    const aiLooksIncomplete = finalQuestions.length === 0 || finalQuestions.length < Math.max(estimatedCount * 0.7, 8);
+    finalQuestions = aiLooksIncomplete
+      ? heuristicFromCleaned
+      : mergeQuestionsPreferExisting(finalQuestions, heuristicFromCleaned);
+  }
+
+  if (finalQuestions.length === 0) {
+    if (heuristicFromCleaned.length > 0) {
+      const solvedHeuristic = await runMathSolving(heuristicFromCleaned, cleanedText, null);
       if (process.env.NODE_ENV !== "production") {
         console.info("[AI Generate] Heuristic fallback used", {
-          count: heuristic.length,
+          count: solvedHeuristic.length,
         });
       }
 
       return {
         cleanedText,
-        questions: heuristic,
+        questions: solvedHeuristic.slice(0, hardLimit),
         sources,
       };
     }
@@ -793,9 +915,17 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
     throw new Error("AI did not return any questions");
   }
 
+  const needResovleAnswers = finalQuestions.length <= 80 && uniqueAnswerCount(finalQuestions) <= 1;
+  if (needResovleAnswers) {
+    finalQuestions = await runMathSolving(finalQuestions, cleanedText, null);
+    if (finalQuestions.length >= 3 && uniqueAnswerCount(finalQuestions) === 1) {
+      finalQuestions = await applyDoubleCheckAnswers(finalQuestions);
+    }
+  }
+
   return {
     cleanedText,
-    questions: unique.slice(0, MAX_QUESTIONS),
+    questions: finalQuestions.slice(0, hardLimit),
     sources,
   };
 }
