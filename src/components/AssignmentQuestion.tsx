@@ -3,6 +3,7 @@
 import { memo } from "react";
 import clsx from "clsx";
 import { Question } from "@/lib/types";
+import { MathText } from "@/components/MathText";
 
 interface Props {
   q: Question;
@@ -83,7 +84,9 @@ export const AssignmentQuestion = memo(function AssignmentQuestion({
                   </div>
                 )}
                 <div className={clsx("prose prose-sm sm:prose-base max-w-none font-medium leading-relaxed", isDark ? "text-slate-200" : "text-slate-700")}>
-                  {q.content?.split('\n').map((line, i) => <p key={i} className="mb-2 last:mb-0">{line}</p>)}
+                  {q.content?.split('\n').map((line, i) => (
+                    <p key={i} className="mb-2 last:mb-0"><MathText text={line} /></p>
+                  ))}
                 </div>
               </div>
             </div>
@@ -115,7 +118,9 @@ export const AssignmentQuestion = memo(function AssignmentQuestion({
               )}
               {q.content && (
                 <div className={clsx("prose prose-sm sm:prose-base max-w-none font-semibold leading-relaxed mb-4", isDark ? "text-slate-200" : "text-slate-800")}>
-                  {q.content?.split('\n').map((line, i) => <p key={i} className="mb-2 last:mb-0">{line}</p>)}
+                  {q.content?.split('\n').map((line, i) => (
+                    <p key={i} className="mb-2 last:mb-0"><MathText text={line} /></p>
+                  ))}
                 </div>
               )}
             </>
@@ -164,7 +169,7 @@ export const AssignmentQuestion = memo(function AssignmentQuestion({
                   {val}
                 </span>
                 <input type="radio" name={`q-${q.id}`} className="sr-only" checked={checked} disabled={locked} onChange={() => onSetChoice(q.id, val)} />
-                {choice && <span className={clsx("flex-1 font-medium sm:text-[15px] pt-0.5 sm:pt-0 relative z-10", checked && isDark && "text-indigo-100")}>{choice}</span>}
+                {choice && <span className={clsx("flex-1 font-medium sm:text-[15px] pt-0.5 sm:pt-0 relative z-10", checked && isDark && "text-indigo-100")}><MathText text={choice} /></span>}
               </label>
             );
           })}

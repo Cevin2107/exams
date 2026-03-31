@@ -3,8 +3,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
-import { Check, Loader2, Sparkles, Upload, X, Save, ImageIcon } from "lucide-react";
+import { Check, Loader2, Sparkles, Upload, X, Save } from "lucide-react";
 import Toast from "@/components/Toast";
+import { MathText } from "@/components/MathText";
 
 interface AiQuestion {
   question: string;
@@ -26,6 +27,8 @@ export function AiGeneratorModal({ assignmentId, isOpen, onClose, onSuccess }: A
   const [message, setMessage] = useState("");
   const [aiQuestions, setAiQuestions] = useState<AiQuestion[]>([]);
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingQuestion, setEditingQuestion] = useState<AiQuestion | null>(null);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
@@ -146,6 +149,59 @@ export function AiGeneratorModal({ assignmentId, isOpen, onClose, onSuccess }: A
     }
   };
 
+  const startEdit = (index: number) => {
+    setEditingIndex(index);
+    setEditingQuestion({ ...aiQuestions[index], options: { ...aiQuestions[index].options } });
+  };
+
+  const cancelEdit = () => {
+    setEditingIndex(null);
+    setEditingQuestion(null);
+  };
+
+  const saveEdit = () => {
+    if (editingIndex === null || !editingQuestion) return;
+
+    const normalizedQuestion = editingQuestion.question.trim();
+    const normalizedOptions = {
+      A: editingQuestion.options.A.trim(),
+      B: editingQuestion.options.B.trim(),
+      C: editingQuestion.options.C.trim(),
+      D: editingQuestion.options.D.trim(),
+    };
+
+    if (!normalizedQuestion || !normalizedOptions.A || !normalizedOptions.B || !normalizedOptions.C || !normalizedOptions.D) {
+      setToast({ message: "Vui lòng nhập đầy đủ nội dung câu hỏi và 4 lựa chọn", type: "error" });
+      return;
+    }
+
+    setAiQuestions((prev) => {
+      const next = [...prev];
+      next[editingIndex] = {
+        ...editingQuestion,
+        question: normalizedQuestion,
+        options: normalizedOptions,
+      };
+      return next;
+    });
+
+    setToast({ message: `Đã cập nhật câu ${editingIndex + 1}`, type: "success" });
+    cancelEdit();
+  };
+
+  const updateEditingOption = (label: "A" | "B" | "C" | "D", value: string) => {
+    setEditingQuestion((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        options: {
+          ...prev.options,
+          [label]: value,
+        },
+      };
+    });
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 animate-fade-in">
       <Card className="flex w-full max-w-4xl flex-col max-h-[90vh] overflow-hidden bg-white shadow-2xl">
@@ -196,13 +252,18 @@ export function AiGeneratorModal({ assignmentId, isOpen, onClose, onSuccess }: A
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-semibold text-slate-700">Hoặc dán văn bản / Yêu cầu chi tiết (Hỗ trợ Ctrl+V)</label>
+                <label className="text-sm font-semibold text-slate-700">
+                  Hoặc dán văn bản / LaTeX / Yêu cầu chi tiết (Hỗ trợ Ctrl+V)
+                </label>
                 <textarea
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
                   className="w-full h-32 rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-indigo-400 focus:outline-none focus:ring-4 focus:ring-indigo-100 resize-none placeholder:text-slate-400"
-                  placeholder="Bạn có thể gõ hoặc paste (Ctrl+V) nội dung vào đây..."
+                  placeholder="Bạn có thể paste trực tiếp câu hỏi dạng LaTeX, ví dụ: Câu 1: $(x-3)^2 + (y+4)^2 = 4$ ..."
                 />
+                <p className="text-xs text-slate-500">
+                  Hệ thống hỗ trợ công thức LaTeX và sẽ hiển thị toán học đẹp sau khi sinh câu hỏi.
+                </p>
               </div>
 
               {status === "error" && (
@@ -239,34 +300,135 @@ export function AiGeneratorModal({ assignmentId, isOpen, onClose, onSuccess }: A
               </div>
 
               <div className="space-y-4">
-                {aiQuestions.map((q, i) => (
-                  <div 
-                    key={i} 
-                    className={`relative rounded-xl border-2 p-4 transition-all cursor-pointer ${
-                      selectedIndices.has(i) ? "border-indigo-500 bg-indigo-50/30" : "border-slate-200 hover:border-slate-300"
-                    }`}
-                    onClick={() => toggleSelect(i)}
-                  >
-                    <div className="absolute right-4 top-4">
-                      <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 transition-colors ${
-                        selectedIndices.has(i) ? "border-indigo-500 bg-indigo-500 text-white" : "border-slate-300"
-                      }`}>
-                        {selectedIndices.has(i) && <Check className="h-4 w-4" />}
-                      </div>
-                    </div>
-                    
-                    <h4 className="pr-10 text-[15px] font-bold text-slate-900 mb-3 leading-snug">Câu {i + 1}: {q.question}</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                      {Object.entries(q.options).map(([key, value]) => (
-                        <div key={key} className={`rounded-lg px-3 py-2 ${
-                          key === q.correct_answer ? "bg-emerald-100 text-emerald-800 font-semibold ring-1 ring-emerald-200" : "bg-slate-50 text-slate-700"
+                {aiQuestions.map((q, i) => {
+                  const isEditing = editingIndex === i && editingQuestion !== null;
+                  const questionData = isEditing ? editingQuestion : q;
+
+                  return (
+                    <div
+                      key={i}
+                      className={`relative rounded-xl border-2 p-4 transition-all ${
+                        selectedIndices.has(i) ? "border-indigo-500 bg-indigo-50/30" : "border-slate-200 hover:border-slate-300"
+                      }`}
+                      onClick={() => {
+                        if (!isEditing) toggleSelect(i);
+                      }}
+                    >
+                      <div className="absolute right-4 top-4 flex items-center gap-2">
+                        {isEditing ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                cancelEdit();
+                              }}
+                              className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                              Hủy
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                saveEdit();
+                              }}
+                              className="rounded-lg border border-indigo-500 bg-indigo-500 px-2 py-1 text-xs font-semibold text-white hover:bg-indigo-600"
+                            >
+                              Lưu câu hỏi
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              startEdit(i);
+                            }}
+                            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            Sửa
+                          </button>
+                        )}
+
+                        <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 transition-colors ${
+                          selectedIndices.has(i) ? "border-indigo-500 bg-indigo-500 text-white" : "border-slate-300"
                         }`}>
-                           {key}. {value}
+                          {selectedIndices.has(i) && <Check className="h-4 w-4" />}
                         </div>
-                      ))}
+                      </div>
+
+                      {isEditing ? (
+                        <div className="space-y-3 pr-40">
+                          <div>
+                            <label className="mb-1 block text-xs font-semibold text-slate-600">Nội dung câu hỏi</label>
+                            <textarea
+                              value={questionData.question}
+                              onChange={(e) => setEditingQuestion((prev) => prev ? { ...prev, question: e.target.value } : prev)}
+                              className="h-24 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {(["A", "B", "C", "D"] as const).map((label) => (
+                              <div key={label}>
+                                <label className="mb-1 block text-xs font-semibold text-slate-600">Lựa chọn {label}</label>
+                                <input
+                                  value={questionData.options[label]}
+                                  onChange={(e) => updateEditingOption(label, e.target.value)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                                />
+                              </div>
+                            ))}
+                          </div>
+
+                          <div>
+                            <p className="mb-1 text-xs font-semibold text-slate-600">Đáp án đúng</p>
+                            <div className="flex flex-wrap gap-2">
+                              {(["A", "B", "C", "D"] as const).map((label) => {
+                                const active = questionData.correct_answer === label;
+                                return (
+                                  <button
+                                    key={label}
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingQuestion((prev) => prev ? { ...prev, correct_answer: label } : prev);
+                                    }}
+                                    className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${
+                                      active
+                                        ? "border-emerald-500 bg-emerald-500 text-white"
+                                        : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                                    }`}
+                                  >
+                                    {label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <h4 className="pr-40 text-[15px] font-bold text-slate-900 mb-3 leading-snug">
+                            Câu {i + 1}: <MathText text={questionData.question} />
+                          </h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                            {Object.entries(questionData.options).map(([key, value]) => (
+                              <div key={key} className={`rounded-lg px-3 py-2 ${
+                                key === questionData.correct_answer ? "bg-emerald-100 text-emerald-800 font-semibold ring-1 ring-emerald-200" : "bg-slate-50 text-slate-700"
+                              }`}>
+                                 {key}. <MathText text={String(value)} />
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import clsx from "clsx";
 import { ChevronDown } from "lucide-react";
+import { MathText } from "@/components/MathText";
 
 export function ResultQuestionsAccordion({ 
   questions, 
@@ -126,7 +127,11 @@ export function ResultQuestionsAccordion({
                         <img src={imgUrl} alt="Câu hỏi" className="max-h-64 w-auto object-contain bg-slate-50 dark:bg-slate-900 mx-auto" />
                       </div>
                     )}
-                    {q.content && <p className="text-[15px] font-semibold text-slate-800 dark:text-slate-200 mt-4 mb-5 leading-relaxed whitespace-pre-wrap">{q.content}</p>}
+                    {q.content && (
+                      <p className="text-[15px] font-semibold text-slate-800 dark:text-slate-200 mt-4 mb-5 leading-relaxed">
+                        <MathText text={q.content} />
+                      </p>
+                    )}
 
                     {/* MCQ Choices */}
                     {q.type === "mcq" && (() => {
@@ -169,7 +174,7 @@ export function ResultQuestionsAccordion({
                                   "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-400"
                                 )}>{choiceLabel}</span>
                                 <span className="flex-1 leading-relaxed">
-                                  {choice ? choice : <span className="italic text-slate-400 dark:text-slate-500">(Không có nội dung)</span>}
+                                  {choice ? <MathText text={choice} /> : <span className="italic text-slate-400 dark:text-slate-500">(Không có nội dung)</span>}
                                 </span>
                                 {isCorrectAnswer && <span className="text-xs font-black tracking-wide text-emerald-600 dark:text-emerald-400 uppercase">Đúng</span>}
                                 {isStudentChoice && !isCorrectAnswer && <span className="text-xs font-black tracking-wide text-rose-600 dark:text-rose-400 uppercase">Bạn chọn</span>}

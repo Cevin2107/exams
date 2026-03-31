@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import "katex/dist/katex.min.css";
 import { QueryProvider } from "@/providers/QueryProvider";
 import { ToastProvider } from "@/components/ui/Toast";
 import { ThemeProvider } from "@/providers/ThemeProvider";

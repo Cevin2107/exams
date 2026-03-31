@@ -7,6 +7,7 @@ import { AiGeneratorModal } from "./AiGeneratorModal";
 import { QuestionEditorModal } from "./QuestionEditorModal";
 import { GripVertical, Plus, Settings2, Trash2, Edit2, CheckCircle2 } from "lucide-react";
 import Toast from "@/components/Toast";
+import { MathText } from "@/components/MathText";
 
 export function QuestionBuilderTab({ assignmentId, initialQuestions }: { assignmentId: string; initialQuestions: any[] }) {
   const [questions, setQuestions] = useState<any[]>(initialQuestions);
@@ -179,7 +180,9 @@ export function QuestionBuilderTab({ assignmentId, initialQuestions }: { assignm
                   {q.points > 0 && <span className="text-sm font-semibold text-slate-500">{q.points} điểm</span>}
                 </div>
                 
-                <p className="text-base font-semibold text-slate-900 leading-relaxed max-w-3xl whitespace-pre-wrap">{q.content}</p>
+                <p className="text-base font-semibold text-slate-900 leading-relaxed max-w-3xl">
+                  <MathText text={q.content || ""} />
+                </p>
 
                 {(q.imageUrl || q.image_url) && <img src={q.imageUrl || q.image_url} alt="img" className="mt-3 max-w-xs rounded-xl border border-slate-200" />}
 
@@ -190,7 +193,7 @@ export function QuestionBuilderTab({ assignmentId, initialQuestions }: { assignm
                       return (
                         <div key={i} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${isCorrect ? 'bg-emerald-50 text-emerald-700 font-semibold ring-1 ring-emerald-200' : 'bg-slate-50 text-slate-600'}`}>
                            <span>{String.fromCharCode(65 + i)}.</span>
-                           <span>{c}</span>
+                           <span><MathText text={c || ""} /></span>
                            {isCorrect && <CheckCircle2 className="h-4 w-4 ml-auto text-emerald-500" />}
                         </div>
                       );
@@ -204,7 +207,7 @@ export function QuestionBuilderTab({ assignmentId, initialQuestions }: { assignm
                       <div key={sq.id || i} className="flex justify-between items-center gap-2 rounded-lg px-3 py-2 text-sm bg-slate-50 text-slate-700">
                          <div className="flex gap-2">
                            <span className="font-semibold text-slate-400">{String.fromCharCode(97 + i)}.</span>
-                           <span>{sq.content}</span>
+                           <span><MathText text={sq.content || ""} /></span>
                          </div>
                          <Badge variant={sq.answerKey === "true" || sq.answer_key === "true" ? "success" : "destructive"} className="shrink-0 text-xs py-0">
                            {sq.answerKey === "true" || sq.answer_key === "true" ? "Đúng" : "Sai"}
