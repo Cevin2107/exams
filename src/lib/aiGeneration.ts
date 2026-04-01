@@ -17,6 +17,9 @@ const OCR_SPACE_API_URL = "https://api.ocr.space/parse/image";
 
 const MAX_TEXT_LENGTH = 15000;
 const TEXT_CHUNK_SIZE = 3500;
+const OCR_TIMEOUT_MS = 22000;
+const AI_TIMEOUT_MS = 25000;
+const ENABLE_ANSWER_SOLVING = process.env.AI_ENABLE_ANSWER_SOLVING === "true";
 
 // OCR optimization settings
 const MAX_IMAGE_WIDTH = 1600; // Giảm kích thước để tăng tốc OCR
@@ -24,6 +27,21 @@ const MAX_IMAGE_HEIGHT = 1600;
 const JPEG_QUALITY = 85;
 
 type HttpError = Error & { status?: number; details?: string };
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (error) {
+    const isTimeout = error instanceof Error && error.name === "TimeoutError";
+    if (isTimeout) {
+      const timeoutError: HttpError = Object.assign(new Error(`Request timeout after ${timeoutMs}ms`), {
+        status: 504,
+      });
+      throw timeoutError;
+    }
+    throw error;
+  }
+}
 
 function aiLog(level: "info" | "warn" | "error", stage: string, message: string, meta?: Record<string, unknown>) {
   const prefix = `[AI][${stage}] ${message}`;
@@ -76,13 +94,13 @@ async function callOcrSpaceApi(imageBuffer: Buffer): Promise<string> {
   formData.append("scale", "true"); // Auto-scale để tăng độ chính xác
   formData.append("isTable", "false"); // Tắt table detection để nhanh hơn
 
-  const res = await fetch(OCR_SPACE_API_URL, {
+  const res = await fetchWithTimeout(OCR_SPACE_API_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: formData.toString(),
-  });
+  }, OCR_TIMEOUT_MS);
 
   if (!res.ok) {
     throw new Error(`OCR.space error ${res.status}: ${await res.text()}`);
@@ -290,7 +308,7 @@ async function callPuterQuestionExtractionModel(prompt: string): Promise<Extract
       headers.Authorization = `Bearer ${puterToken}`;
     }
 
-    const res = await fetch(PUTER_OPENAI_BASE_URL, {
+    const res = await fetchWithTimeout(PUTER_OPENAI_BASE_URL, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -306,7 +324,7 @@ async function callPuterQuestionExtractionModel(prompt: string): Promise<Extract
           { role: "user", content: prompt },
         ],
       }),
-    });
+    }, AI_TIMEOUT_MS);
 
     if (!res.ok) {
       const body = await res.text();
@@ -367,7 +385,7 @@ async function callQuestionExtractionModel(prompt: string, preferredModel?: stri
 
     for (const model of modelsToTry) {
       aiLog("info", "OPENROUTER-EXTRACT", "Trying model", { model });
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      const res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -386,7 +404,7 @@ async function callQuestionExtractionModel(prompt: string, preferredModel?: stri
             { role: "user", content: prompt },
           ],
         }),
-      });
+      }, AI_TIMEOUT_MS);
 
       if (!res.ok) {
         const body = await res.text();
@@ -430,7 +448,7 @@ async function callQuestionExtractionModel(prompt: string, preferredModel?: stri
   // 3) Groq fallback
   aiLog("info", "EXTRACT", "Trying Groq fallback", { model: GROQ_TEXT_MODEL });
 
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+  const res = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -449,7 +467,7 @@ async function callQuestionExtractionModel(prompt: string, preferredModel?: stri
         { role: "user", content: prompt },
       ],
     }),
-  });
+  }, AI_TIMEOUT_MS);
 
   if (!res.ok) {
     const body = await res.text();
@@ -566,7 +584,7 @@ ${sourceText}`;
         Authorization: `Bearer ${puterToken}`,
       };
 
-      const res = await fetch(PUTER_OPENAI_BASE_URL, {
+      const res = await fetchWithTimeout(PUTER_OPENAI_BASE_URL, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -581,7 +599,7 @@ ${sourceText}`;
             { role: "user", content: solvePrompt },
           ],
         }),
-      });
+      }, AI_TIMEOUT_MS);
 
       if (!res.ok) {
         const body = await res.text();
@@ -610,7 +628,7 @@ ${sourceText}`;
   if (openRouterKey) {
     for (const model of modelsToTry) {
       aiLog("info", "OPENROUTER-SOLVE", "Trying model", { model });
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      const res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -628,7 +646,7 @@ ${sourceText}`;
             { role: "user", content: solvePrompt },
           ],
         }),
-      });
+      }, AI_TIMEOUT_MS);
 
       if (!res.ok) {
         const body = await res.text();
@@ -663,7 +681,7 @@ ${sourceText}`;
   }
 
   aiLog("info", "GROQ-SOLVE", "Trying Groq solve fallback", { model: GROQ_TEXT_MODEL });
-  const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+  const groqRes = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -681,7 +699,7 @@ ${sourceText}`;
         { role: "user", content: solvePrompt },
       ],
     }),
-  });
+  }, AI_TIMEOUT_MS);
 
   if (!groqRes.ok) {
     const body = await groqRes.text();
@@ -802,11 +820,14 @@ ${text}`;
     }
   }
 
-  // Mandatory step: solve and set answers before returning output.
-  const solved = await resolveAnswersWithAi(merged, text, STEPFUN_TEXT_MODEL);
-  aiLog("info", "PIPELINE", "Chunk completed", { extracted: solved.length });
+  if (ENABLE_ANSWER_SOLVING) {
+    const solved = await resolveAnswersWithAi(merged, text, STEPFUN_TEXT_MODEL);
+    aiLog("info", "PIPELINE", "Chunk completed", { extracted: solved.length, solved: true });
+    return solved.slice(0, limit);
+  }
 
-  return solved.slice(0, limit);
+  aiLog("info", "PIPELINE", "Chunk completed", { extracted: merged.length, solved: false });
+  return merged.slice(0, limit);
 }
 
 export async function buildQuestionsFromUploads(files: File[], manualText: string) {

@@ -114,6 +114,9 @@ export function AiGeneratorModal({ assignmentId, isOpen, onClose, onSuccess }: A
       });
 
       if (!res.ok) {
+        if (res.status === 504) {
+          throw new Error("AI xử lý quá lâu và bị timeout. Hãy giảm số lượng file hoặc dán ít nội dung hơn rồi thử lại.");
+        }
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || "Lỗi tạo câu hỏi");
       }
