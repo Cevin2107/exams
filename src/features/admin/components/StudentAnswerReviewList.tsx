@@ -1,5 +1,6 @@
 import React from "react";
 import { CheckCircle2, AlertCircle, FileCheck, XCircle } from "lucide-react";
+import { MathText } from "@/components/MathText";
 
 export interface ReviewQuestion {
   questionId: string;
@@ -47,6 +48,14 @@ function sanitizeQuestionContent(content: string) {
   return content.replace(/\s*}\s*$/, "").trim();
 }
 
+function toMathRenderableText(content: string) {
+  return content
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .trim();
+}
+
 export function StudentAnswerReviewList({
   questions,
   isSubmitted,
@@ -66,7 +75,7 @@ export function StudentAnswerReviewList({
           const regradeAnswer = regradeAnswers.get(q.questionId);
           const displayIsCorrect = regradingMode ? (regradeAnswer?.isCorrect ?? (q.isCorrect ?? false)) : (q.isCorrect ?? false);
           const displayPointsAwarded = regradingMode ? (regradeAnswer?.pointsAwarded ?? (q.pointsAwarded ?? 0)) : (q.pointsAwarded ?? 0);
-          const displayContent = sanitizeQuestionContent(q.content || "");
+          const displayContent = toMathRenderableText(sanitizeQuestionContent(q.content || ""));
 
           return (
             <div
@@ -161,7 +170,9 @@ export function StudentAnswerReviewList({
                 </div>
               )}
 
-              <p className="text-sm text-slate-700 leading-relaxed mb-3" dangerouslySetInnerHTML={{ __html: displayContent }}></p>
+              <div className="text-sm text-slate-700 leading-relaxed mb-3">
+                <MathText text={displayContent} />
+              </div>
 
               {q.type === "mcq" ? (
                 <div className="space-y-2">
@@ -207,7 +218,7 @@ export function StudentAnswerReviewList({
                             const optionLabel = String.fromCharCode(65 + i);
                             const isSelected = i === selectedIndex;
                             const isKey = i === keyIndex;
-                            const content = typeof parsedChoices[i] === "string" ? parsedChoices[i] : "";
+                            const content = typeof parsedChoices[i] === "string" ? toMathRenderableText(parsedChoices[i]) : "";
 
                             return (
                               <div
@@ -238,7 +249,7 @@ export function StudentAnswerReviewList({
                                       {optionLabel}
                                     </span>
                                     <span className="break-words text-slate-700">
-                                      {content ? content : <span className="italic opacity-60">(Không có nội dung)</span>}
+                                      {content ? <MathText text={content} /> : <span className="italic opacity-60">(Không có nội dung)</span>}
                                     </span>
                                   </div>
 
@@ -314,7 +325,7 @@ export function StudentAnswerReviewList({
                         <div className="space-y-1.5">
                           <div className="flex gap-2 text-sm text-slate-700">
                             <span className="font-semibold text-slate-400">{String.fromCharCode(97 + i)}.</span>
-                            <span>{sq.content}</span>
+                            <span><MathText text={toMathRenderableText(sq.content || "")} /></span>
                           </div>
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700">
@@ -391,7 +402,7 @@ export function StudentAnswerReviewList({
                       <FileCheck className="h-3 w-3" />
                       Câu trả lời của học sinh:
                     </p>
-                    <p className="text-xs text-indigo-900 leading-relaxed">{q.studentAnswer}</p>
+                    <p className="text-xs text-indigo-900 leading-relaxed"><MathText text={toMathRenderableText(q.studentAnswer || "")} /></p>
                   </div>
                   
                   {regradingMode && onSetAnswerPoints && (

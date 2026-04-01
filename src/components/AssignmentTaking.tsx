@@ -281,6 +281,24 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
     return () => { document.removeEventListener("visibilitychange", handleVC); window.removeEventListener("beforeunload", handleBU); };
   }, [sessionId, studentName, hasSubmitted]);
 
+  useEffect(() => {
+    if (!sessionId || !studentName || hasSubmitted) return;
+
+    const tick = () => {
+      if (document.hidden) return;
+      fetch("/api/student-sessions/activity", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      }).catch((e) => e);
+    };
+
+    // Send one heartbeat immediately and continue periodically while visible.
+    tick();
+    const timer = window.setInterval(tick, 15000);
+    return () => window.clearInterval(timer);
+  }, [sessionId, studentName, hasSubmitted]);
+
   const setChoice = useCallback((questionId: string, value: string) => {
     setAnswers(prev => ({ ...prev, [questionId]: value }));
     if (sessionId) {

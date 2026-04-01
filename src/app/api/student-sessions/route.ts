@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+const ACTIVE_SESSION_TIMEOUT_MS = 45 * 1000;
 
 // POST: Tạo session mới khi học sinh bắt đầu làm bài
 export async function POST(req: Request) {
@@ -184,7 +185,36 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Failed to fetch sessions" }, { status: 500 });
     }
 
-    return NextResponse.json({ sessions: sessions || [] });
+    const rawSessions = sessions || [];
+
+    // Defensive cleanup: if a student has been inactive for too long,
+    // treat the active session as exited even if beforeunload was missed.
+    const now = Date.now();
+    const staleActiveIds = rawSessions
+      .filter((session) => {
+        if (session.status !== "active") return false;
+        if (session.submission_id) return false;
+        const lastAt = new Date(session.last_activity_at || session.started_at || 0).getTime();
+        if (!Number.isFinite(lastAt) || lastAt <= 0) return false;
+        return now - lastAt > ACTIVE_SESSION_TIMEOUT_MS;
+      })
+      .map((session) => session.id);
+
+    if (staleActiveIds.length > 0) {
+      await supabase
+        .from("student_sessions")
+        .update({ status: "exited" })
+        .in("id", staleActiveIds)
+        .eq("status", "active");
+
+      for (const session of rawSessions) {
+        if (staleActiveIds.includes(session.id)) {
+          session.status = "exited";
+        }
+      }
+    }
+
+    return NextResponse.json({ sessions: rawSessions });
   } catch (err) {
     console.error("Error fetching sessions:", err);
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });
