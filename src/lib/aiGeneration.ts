@@ -361,6 +361,21 @@ function detectQuestionIndices(text: string): number[] {
   return Array.from(found).sort((a, b) => a - b);
 }
 
+function normalizeLatexText(text: string): string {
+  if (!text) return text;
+
+  return text
+    // Common corruption patterns from model outputs
+    .replace(/\/\s*fraq/gi, "\\\\frac")
+    .replace(/\/\s*frac/gi, "\\\\frac")
+    .replace(/\\\s*fraq/gi, "\\\\frac")
+    .replace(/\\\s*frac/gi, "\\\\frac")
+    .replace(/\\\s*sqrt/gi, "\\\\sqrt")
+    .replace(/\\\s*times/gi, "\\\\times")
+    // Normalize escaped spacing like "\\ frac"
+    .replace(/\\\s+([a-zA-Z]+)/g, "\\\\$1");
+}
+
 function estimateQuestionCountInChunk(text: string): number {
   const byIndices = detectQuestionIndices(text).length;
 
@@ -417,14 +432,54 @@ function parseQuestionsHeuristically(text: string): ExtractedQuestion[] {
     }
 
     const optionMatch = line.match(/^([ABCD])\s*[\).:-]\s*(.*)$/i);
+    if (optionMatch && !current) {
+      current = {
+        question: "",
+        options: { A: "", B: "", C: "", D: "" },
+        correct_answer: "A",
+      };
+    }
+
     if (optionMatch && current) {
       const key = optionMatch[1].toUpperCase() as "A" | "B" | "C" | "D";
+
+      // If a fresh A option appears after a full A/B/C/D set, start a new question block.
+      if (key === "A" && current.options.A && current.options.B && current.options.C && current.options.D) {
+        pushCurrent();
+        current = {
+          question: "",
+          options: { A: "", B: "", C: "", D: "" },
+          correct_answer: "A",
+        };
+      }
+
       current.options[key] = optionMatch[2] || "";
       currentOption = key;
       continue;
     }
 
-    if (!current) continue;
+    if (!current) {
+      current = {
+        question: line,
+        options: { A: "", B: "", C: "", D: "" },
+        correct_answer: "A",
+      };
+      currentOption = null;
+      continue;
+    }
+
+    // If we've already captured full options and hit plain text, treat it as the next question stem.
+    if (current.options.A && current.options.B && current.options.C && current.options.D) {
+      pushCurrent();
+      current = {
+        question: line,
+        options: { A: "", B: "", C: "", D: "" },
+        correct_answer: "A",
+      };
+      currentOption = null;
+      continue;
+    }
+
     if (currentOption) {
       current.options[currentOption] = `${current.options[currentOption]} ${line}`.trim();
     } else {
@@ -449,16 +504,16 @@ function normalizeQuestions(raw: unknown): ExtractedQuestion[] {
     .map<ExtractedQuestion | null>((candidate) => {
       const q = candidate as AiQuestionPayload;
       const sourceIndexRaw = q.source_index;
-      const question = q.question?.toString().trim();
+      const question = normalizeLatexText(q.question?.toString().trim() || "");
       const optionsRecord = q.options || {};
       const correctRaw = q.correct_answer?.toString().trim().toUpperCase();
       if (!question) return null;
       const sourceIndex = Number.parseInt(sourceIndexRaw?.toString() || "", 10);
       const opt: Record<"A" | "B" | "C" | "D", string> = {
-        A: optionsRecord.A?.toString().trim() || "",
-        B: optionsRecord.B?.toString().trim() || "",
-        C: optionsRecord.C?.toString().trim() || "",
-        D: optionsRecord.D?.toString().trim() || "",
+        A: normalizeLatexText(optionsRecord.A?.toString().trim() || ""),
+        B: normalizeLatexText(optionsRecord.B?.toString().trim() || ""),
+        C: normalizeLatexText(optionsRecord.C?.toString().trim() || ""),
+        D: normalizeLatexText(optionsRecord.D?.toString().trim() || ""),
       };
       const firstNonEmpty = (Object.entries(opt).find(([, v]) => v)?.[0] as "A" | "B" | "C" | "D") || "A";
       const correctAnswer = ["A", "B", "C", "D"].includes(correctRaw || "")
@@ -474,6 +529,22 @@ function normalizeQuestions(raw: unknown): ExtractedQuestion[] {
     .filter((q): q is ExtractedQuestion => q !== null);
 
   return normalized;
+}
+
+function buildManualFallbackQuestion(sourceText: string): ExtractedQuestion {
+  const normalized = compactWhitespace(sourceText);
+  const stem = normalizeLatexText(clampText(normalized, 420));
+  return {
+    question: stem || "Nội dung dán vào chưa đủ cấu trúc để tách câu hỏi tự động.",
+    options: {
+      A: "",
+      B: "",
+      C: "",
+      D: "",
+    },
+    correct_answer: "A",
+    ai_solve_status: "unsolved",
+  };
 }
 
 function hasLikelyBrokenLatex(text: string): boolean {
@@ -1170,6 +1241,32 @@ ${extractionSource}`;
       message: (error as Error).message,
     });
   }
+
+  if (picked.length === 0 && heuristic.length === 0 && hasTimeBudget(deadlineAt, MIN_REMAINING_FOR_EXTRACTION_MS)) {
+    const fallbackPrompt = `Bóc tách tối đa ${limit} câu trắc nghiệm từ văn bản bên dưới.
+Nếu thiếu source_index thì bỏ qua source_index.
+Luôn trả JSON mảng hợp lệ theo schema:
+[
+  {
+    "question": "...",
+    "options": {"A": "...", "B": "...", "C": "...", "D": "..."},
+    "correct_answer": "A"
+  }
+]
+Văn bản:
+${extractionSource}`;
+
+    try {
+      aiLog("info", "PIPELINE", "Run fallback extraction prompt", { limit });
+      const fallbackExtracted = await callQuestionExtractionModel(fallbackPrompt);
+      picked = fallbackExtracted.slice(0, limit);
+    } catch (error) {
+      aiLog("warn", "PIPELINE", "Fallback extraction failed", {
+        message: (error as Error).message,
+      });
+    }
+  }
+
   aiLog("info", "PIPELINE", "AI extraction supplement result", {
     extractedByAi: picked.length,
     heuristicSeed: heuristic.length,
@@ -1446,6 +1543,14 @@ ${cleanedText}`;
   }
 
   if (unique.length === 0) {
+    if (manualText.trim()) {
+      aiLog("warn", "PIPELINE", "Using manual-text fallback question due empty extraction result");
+      return {
+        cleanedText,
+        questions: [buildManualFallbackQuestion(manualText)],
+        sources,
+      };
+    }
     throw new Error("AI did not return any questions");
   }
 
