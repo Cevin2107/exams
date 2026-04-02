@@ -8,8 +8,8 @@ const OPENROUTER_TEXT_MODELS = (process.env.AI_QUESTION_PARSER_MODELS || `${OPEN
   .map((x) => x.trim())
   .filter(Boolean);
 const PUTER_OPENAI_BASE_URL = "https://api.puter.com/puterai/openai/v1/chat/completions";
-const PUTER_TEXT_MODEL = process.env.AI_QUESTION_PUTER_MODEL || "qwen/qwen3.6-plus-preview:free";
-const PUTER_TEXT_MODELS = (process.env.AI_QUESTION_PUTER_MODELS || `${PUTER_TEXT_MODEL},arcee-ai/trinity-large-preview:free`)
+const PUTER_TEXT_MODEL = process.env.AI_QUESTION_PUTER_MODEL || "arcee-ai/trinity-large-preview:free";
+const PUTER_TEXT_MODELS = (process.env.AI_QUESTION_PUTER_MODELS || `${PUTER_TEXT_MODEL},qwen/qwen3.6-plus-preview:free`)
   .split(",")
   .map((x) => x.trim())
   .filter(Boolean);
