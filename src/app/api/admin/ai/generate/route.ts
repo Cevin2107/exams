@@ -5,6 +5,48 @@ import { buildQuestionsFromUploads } from "@/lib/aiGeneration";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+function classifyAiError(error: unknown): { status: number; publicMessage: string; code: string } {
+  const message = error instanceof Error ? error.message : "Unknown error";
+
+  if (message.includes("Thiếu GROQ_API_KEY")) {
+    return {
+      status: 503,
+      publicMessage: "Server chưa cấu hình GROQ_API_KEY trên môi trường deploy.",
+      code: "MISSING_GROQ_KEY",
+    };
+  }
+
+  if (message.includes("OpenRouter 401") || message.includes("Groq text 401")) {
+    return {
+      status: 502,
+      publicMessage: "AI provider từ chối xác thực. Kiểm tra lại API key trên server.",
+      code: "AI_PROVIDER_AUTH_FAILED",
+    };
+  }
+
+  if (message.includes("Không có nội dung để xử lý")) {
+    return {
+      status: 422,
+      publicMessage: "Không đọc được nội dung từ file tải lên. Hãy thử file rõ nét hơn hoặc dán văn bản thủ công.",
+      code: "OCR_NO_TEXT",
+    };
+  }
+
+  if (message.includes("AI did not return any questions")) {
+    return {
+      status: 502,
+      publicMessage: "AI chưa trích xuất được câu hỏi từ dữ liệu hiện tại. Hãy thử lại với ảnh/PDF rõ hơn.",
+      code: "AI_EMPTY_RESULT",
+    };
+  }
+
+  return {
+    status: 500,
+    publicMessage: "Không thể tạo câu hỏi bằng AI lúc này, vui lòng thử lại sau.",
+    code: "AI_GENERATION_FAILED",
+  };
+}
+
 export async function POST(req: NextRequest) {
   const isAuth = await checkAdminAuth();
   if (!isAuth) {
@@ -38,12 +80,14 @@ export async function POST(req: NextRequest) {
     const message = error instanceof Error ? error.message : "Unknown error";
     const errorWithDetails = error as { details?: string };
     const details = errorWithDetails?.details || undefined;
+    const classified = classifyAiError(error);
     return NextResponse.json(
       {
-        error: isDev ? message : "Không thể tạo câu hỏi bằng AI lúc này, vui lòng thử lại sau.",
+        error: isDev ? message : classified.publicMessage,
         details: isDev ? details : undefined,
+        code: classified.code,
       },
-      { status: 500 }
+      { status: isDev ? 500 : classified.status }
     );
   }
 }

@@ -1342,6 +1342,7 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
 
   const texts: string[] = [];
   const sources: Array<{ name: string; chars: number; kind: "image" | "pdf" | "text" }> = [];
+  const ocrFailures: Array<{ file: string; reason: string }> = [];
 
   // Process multiple files in parallel để tăng tốc
   const ocrResults = await Promise.all(
@@ -1351,14 +1352,20 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
         const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
         return { text, source, kind: (isPdf ? "pdf" : "image") as "image" | "pdf" };
       } catch (error) {
+        const reason = error instanceof Error ? error.message : "Unknown OCR error";
         console.warn(`OCR failed for ${file.name}:`, error);
-        return null;
+        return { text: "", source: file.name, kind: "image" as const, error: reason };
       }
     })
   );
 
   // Collect successful OCR results
   for (const result of ocrResults) {
+    if (result?.error) {
+      ocrFailures.push({ file: result.source, reason: result.error });
+      continue;
+    }
+
     if (result && result.text) {
       texts.push(result.text);
       sources.push({ name: result.source, chars: result.text.length, kind: result.kind });
@@ -1372,7 +1379,19 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
   }
 
   if (texts.length === 0) {
-    throw new Error("Không có nội dung để xử lý");
+    const failureSummary = ocrFailures
+      .slice(0, 3)
+      .map((item) => `${item.file}: ${item.reason}`)
+      .join(" | ");
+
+    const err: HttpError = Object.assign(
+      new Error("Không có nội dung để xử lý"),
+      {
+        details: failureSummary || "Không đọc được nội dung từ file tải lên.",
+        status: 422,
+      }
+    );
+    throw err;
   }
 
   const cleanedText = cleanOcrText(texts);
