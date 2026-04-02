@@ -8,8 +8,8 @@ const OPENROUTER_TEXT_MODELS = (process.env.AI_QUESTION_PARSER_MODELS || `${OPEN
   .map((x) => x.trim())
   .filter(Boolean);
 const PUTER_OPENAI_BASE_URL = "https://api.puter.com/puterai/openai/v1/chat/completions";
-const PUTER_TEXT_MODEL = process.env.AI_QUESTION_PUTER_MODEL || "arcee-ai/trinity-large-preview:free";
-const PUTER_TEXT_MODELS = (process.env.AI_QUESTION_PUTER_MODELS || `${PUTER_TEXT_MODEL},qwen/qwen3.6-plus-preview:free`)
+const PUTER_TEXT_MODEL = process.env.AI_QUESTION_PUTER_MODEL || "qwen/qwen3.6-plus-preview:free";
+const PUTER_TEXT_MODELS = (process.env.AI_QUESTION_PUTER_MODELS || `${PUTER_TEXT_MODEL},arcee-ai/trinity-large-preview:free`)
   .split(",")
   .map((x) => x.trim())
   .filter(Boolean);
@@ -18,8 +18,8 @@ const OCR_SPACE_API_URL = "https://api.ocr.space/parse/image";
 const MAX_TEXT_LENGTH = 15000;
 const TEXT_CHUNK_SIZE = 3500;
 const OCR_TIMEOUT_MS = 22000;
-const AI_TIMEOUT_MS = 35000; // Tăng timeout để tránh bị timeout nhanh
-const PUTER_TIMEOUT_MS = 30000; // Timeout riêng cho Puter (có thể chậm hơn)
+const AI_TIMEOUT_MS = 105000; // Tăng timeout để phù hợp với Puter timeout
+const PUTER_TIMEOUT_MS = 100000; // Timeout 100s cho Qwen
 const PUTER_MAX_RETRIES = 2; // Số lần retry khi timeout
 const PUTER_RETRY_DELAY_MS = 2000; // Delay giữa các lần retry
 const ENABLE_ANSWER_SOLVING = process.env.AI_ENABLE_ANSWER_SOLVING === "true";
