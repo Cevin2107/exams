@@ -18,7 +18,10 @@ const OCR_SPACE_API_URL = "https://api.ocr.space/parse/image";
 const MAX_TEXT_LENGTH = 15000;
 const TEXT_CHUNK_SIZE = 3500;
 const OCR_TIMEOUT_MS = 22000;
-const AI_TIMEOUT_MS = 25000;
+const AI_TIMEOUT_MS = 105000; // Tăng timeout để phù hợp với Puter timeout
+const PUTER_TIMEOUT_MS = 100000; // Timeout 100s cho Qwen
+const PUTER_MAX_RETRIES = 2; // Số lần retry khi timeout
+const PUTER_RETRY_DELAY_MS = 2000; // Delay giữa các lần retry
 const ENABLE_ANSWER_SOLVING = process.env.AI_ENABLE_ANSWER_SOLVING === "true";
 
 // OCR optimization settings
@@ -298,54 +301,114 @@ async function callPuterQuestionExtractionModel(prompt: string): Promise<Extract
     return [];
   }
   let lastError: HttpError | null = null;
+  
+  const requestPayload = (model: string) => ({
+    model,
+    temperature: 0,
+    max_tokens: 1800,
+    messages: [
+      {
+        role: "system",
+        content:
+          "Bạn là bộ trích xuất câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ, không thêm chữ ngoài JSON. Giữ nguyên tiếng Việt và giữ nguyên ký hiệu LaTeX (ví dụ $...$, \\\\(...\\\\), \\\\[...\\\\], \\\\frac).",
+      },
+      { role: "user", content: prompt },
+    ],
+  });
 
   for (const model of PUTER_TEXT_MODELS) {
-    aiLog("info", "PUTER-EXTRACT", "Trying model", { model });
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (puterToken) {
-      headers.Authorization = `Bearer ${puterToken}`;
-    }
+    const requiredModel = model;
+    aiLog("info", "PUTER-EXTRACT", "Trying model", { model, required: requiredModel });
+    
+    // Retry logic với exponential backoff
+    for (let attempt = 1; attempt <= PUTER_MAX_RETRIES; attempt++) {
+      try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (puterToken) {
+          headers.Authorization = `Bearer ${puterToken}`;
+        }
 
-    const res = await fetchWithTimeout(PUTER_OPENAI_BASE_URL, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model,
-        temperature: 0,
-        max_tokens: 1800,
-        messages: [
-          {
-            role: "system",
-            content:
-              "Bạn là bộ trích xuất câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ, không thêm chữ ngoài JSON. Giữ nguyên tiếng Việt và giữ nguyên ký hiệu LaTeX (ví dụ $...$, \\\\(...\\\\), \\\\[...\\\\], \\\\frac).",
-          },
-          { role: "user", content: prompt },
-        ],
-      }),
-    }, AI_TIMEOUT_MS);
+        const res = await fetchWithTimeout(PUTER_OPENAI_BASE_URL, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(requestPayload(model)),
+        }, PUTER_TIMEOUT_MS);
 
-    if (!res.ok) {
-      const body = await res.text();
-      aiLog("warn", "PUTER-EXTRACT", "Model failed", { model, status: res.status });
-      lastError = Object.assign(new Error(`Puter ${model} error: ${res.status}`), {
-        details: body,
-        status: res.status,
-      }) as HttpError;
-      continue;
-    }
+        if (!res.ok) {
+          const body = await res.text();
+          aiLog("warn", "PUTER-EXTRACT", "Model failed", { model, attempt, status: res.status });
+          
+          // Nếu lỗi 4xx (client error), không retry
+          if (res.status >= 400 && res.status < 500 && res.status !== 429) {
+            lastError = Object.assign(new Error(`Puter ${model} error: ${res.status}`), {
+              details: body,
+              status: res.status,
+            }) as HttpError;
+            break; // Thử model tiếp theo
+          }
+          
+          // Nếu là 429 (rate limit) hoặc 5xx (server error), retry
+          if (attempt < PUTER_MAX_RETRIES) {
+            const delay = PUTER_RETRY_DELAY_MS * attempt;
+            aiLog("info", "PUTER-EXTRACT", `Retrying after ${delay}ms`, { attempt, model });
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
+          }
+          
+          lastError = Object.assign(new Error(`Puter ${model} error: ${res.status}`), {
+            details: body,
+            status: res.status,
+          }) as HttpError;
+          break;
+        }
 
-    const data = await res.json();
-    const raw = extractAssistantText(data.choices?.[0]?.message?.content || "");
-    try {
-      const parsed = normalizeQuestions(JSON.parse(extractJsonArray(raw)));
-      if (parsed.length > 0) {
-        aiLog("info", "PUTER-EXTRACT", "Model succeeded", { model, questions: parsed.length });
-        return parsed;
+        const data = await res.json();
+        const raw = extractAssistantText(data.choices?.[0]?.message?.content || "");
+        try {
+          const parsed = normalizeQuestions(JSON.parse(extractJsonArray(raw)));
+          if (parsed.length > 0) {
+            aiLog("info", "PUTER-EXTRACT", "Model succeeded", { model, questions: parsed.length, attempt });
+            return parsed;
+          }
+          // Nếu parse được nhưng không có question, thử lại
+          aiLog("warn", "PUTER-EXTRACT", "Parsed but no questions", { model, attempt });
+        } catch (parseError) {
+          aiLog("warn", "PUTER-EXTRACT", "Parse error", { model, attempt, error: (parseError as Error).message });
+        }
+        
+        // Nếu parse error hoặc không có questions, retry
+        if (attempt < PUTER_MAX_RETRIES) {
+          const delay = PUTER_RETRY_DELAY_MS * attempt;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        break; // Hết retry, thử model tiếp theo
+        
+      } catch (error) {
+        const httpError = error as HttpError;
+        const isTimeout = httpError.status === 504;
+        
+        aiLog("warn", "PUTER-EXTRACT", "Request error", {
+          model,
+          attempt,
+          status: httpError.status,
+          message: httpError.message,
+        });
+        
+        // Nếu timeout và còn retry, thử lại
+        if (isTimeout && attempt < PUTER_MAX_RETRIES) {
+          const delay = PUTER_RETRY_DELAY_MS * Math.pow(2, attempt - 1); // Exponential backoff
+          aiLog("info", "PUTER-EXTRACT", `Timeout, retrying after ${delay}ms`, { attempt, model });
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        lastError = httpError;
+        break; // Hết retry hoặc không phải timeout, thử model tiếp theo
       }
-    } catch {
-      // Try next Puter model.
     }
   }
 
@@ -357,7 +420,7 @@ async function callQuestionExtractionModel(prompt: string, preferredModel?: stri
   let puterFailure: HttpError | null = null;
   let openRouterFailure: HttpError | null = null;
 
-  // 1) Puter first
+  // 1) Puter first với retry logic đã được handle bên trong callPuterQuestionExtractionModel
   try {
     aiLog("info", "EXTRACT", "Trying Puter first");
     const puterParsed = await callPuterQuestionExtractionModel(prompt);
@@ -365,12 +428,24 @@ async function callQuestionExtractionModel(prompt: string, preferredModel?: stri
       aiLog("info", "EXTRACT", "Puter primary succeeded", { questions: puterParsed.length });
       return puterParsed;
     }
+    // Nếu Puter trả về empty array (không phải error), vẫn fallback
+    aiLog("info", "EXTRACT", "Puter returned no results, trying OpenRouter");
   } catch (error) {
     puterFailure = error as HttpError;
-    aiLog("warn", "EXTRACT", "Puter primary failed, fallback to OpenRouter", {
-      status: puterFailure.status,
-      message: puterFailure.message,
-    });
+    const isTimeout = puterFailure.status === 504;
+    
+    // Log chi tiết hơn về lỗi
+    if (isTimeout) {
+      aiLog("warn", "EXTRACT", "Puter failed after retries (timeout), fallback to OpenRouter", {
+        status: puterFailure.status,
+        message: puterFailure.message,
+      });
+    } else {
+      aiLog("warn", "EXTRACT", "Puter primary failed, fallback to OpenRouter", {
+        status: puterFailure.status,
+        message: puterFailure.message,
+      });
+    }
   }
 
   // 2) OpenRouter fallback
@@ -384,45 +459,56 @@ async function callQuestionExtractionModel(prompt: string, preferredModel?: stri
     let lastError: HttpError | null = null;
 
     for (const model of modelsToTry) {
-      aiLog("info", "OPENROUTER-EXTRACT", "Trying model", { model });
-      const res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${openRouterKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0,
-          max_tokens: 1800,
-          messages: [
-            {
-              role: "system",
-              content:
-                "Bạn là bộ trích xuất câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ, không thêm chữ ngoài JSON. Giữ nguyên tiếng Việt và giữ nguyên ký hiệu LaTeX (ví dụ $...$, \\\\(...\\\\), \\\\[...\\\\], \\\\frac).",
-            },
-            { role: "user", content: prompt },
-          ],
-        }),
-      }, AI_TIMEOUT_MS);
-
-      if (!res.ok) {
-        const body = await res.text();
-        aiLog("warn", "OPENROUTER-EXTRACT", "Model failed", { model, status: res.status });
-        lastError = Object.assign(new Error(`OpenRouter ${model} error: ${res.status}`), { details: body, status: res.status });
-        continue;
-      }
-
-      const data = await res.json();
-      const raw = data.choices?.[0]?.message?.content || "";
       try {
-        const parsed = normalizeQuestions(JSON.parse(extractJsonArray(raw)));
-        if (parsed.length > 0) {
-          aiLog("info", "OPENROUTER-EXTRACT", "Model succeeded", { model, questions: parsed.length });
-          return parsed;
+        aiLog("info", "OPENROUTER-EXTRACT", "Trying model", { model });
+        const res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${openRouterKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0,
+            max_tokens: 1800,
+            messages: [
+              {
+                role: "system",
+                content:
+                  "Bạn là bộ trích xuất câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ, không thêm chữ ngoài JSON. Giữ nguyên tiếng Việt và giữ nguyên ký hiệu LaTeX (ví dụ $...$, \\\\(...\\\\), \\\\[...\\\\], \\\\frac).",
+              },
+              { role: "user", content: prompt },
+            ],
+          }),
+        }, AI_TIMEOUT_MS);
+
+        if (!res.ok) {
+          const body = await res.text();
+          aiLog("warn", "OPENROUTER-EXTRACT", "Model failed", { model, status: res.status });
+          lastError = Object.assign(new Error(`OpenRouter ${model} error: ${res.status}`), { details: body, status: res.status });
+          continue;
         }
-      } catch {
-        // Try next model.
+
+        const data = await res.json();
+        const raw = data.choices?.[0]?.message?.content || "";
+        try {
+          const parsed = normalizeQuestions(JSON.parse(extractJsonArray(raw)));
+          if (parsed.length > 0) {
+            aiLog("info", "OPENROUTER-EXTRACT", "Model succeeded", { model, questions: parsed.length });
+            return parsed;
+          }
+        } catch {
+          // Try next model.
+        }
+      } catch (error) {
+        const httpError = error as HttpError;
+        aiLog("warn", "OPENROUTER-EXTRACT", "Request error", {
+          model,
+          status: httpError.status,
+          message: httpError.message,
+        });
+        lastError = httpError;
+        continue;
       }
     }
 
