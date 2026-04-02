@@ -3,7 +3,7 @@ import sharp from "sharp";
 const GROQ_TEXT_MODEL = "llama-3.1-8b-instant";
 const STEPFUN_TEXT_MODEL = "stepfun/step-3.5-flash:free";
 const OPENROUTER_TEXT_MODEL = process.env.AI_QUESTION_PARSER_MODEL || STEPFUN_TEXT_MODEL;
-const OPENROUTER_TEXT_MODELS = (process.env.AI_QUESTION_PARSER_MODELS || `${OPENROUTER_TEXT_MODEL},google/gemma-3-27b-it:free`)
+const OPENROUTER_TEXT_MODELS = (process.env.AI_QUESTION_PARSER_MODELS || `${OPENROUTER_TEXT_MODEL}`)
   .split(",")
   .map((x) => x.trim())
   .filter(Boolean);
@@ -21,6 +21,15 @@ const PUTER_TEXT_MODELS = (() => {
   const others = unique.filter((model) => !model.toLowerCase().includes("qwen"));
   return [...qwenFirst, ...others];
 })();
+const PUTER_EXTRACTION_MODELS = (() => {
+  const configured = (process.env.AI_QUESTION_PUTER_EXTRACTION_MODELS || "arcee-ai/trinity-large-preview:free")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const unique = Array.from(new Set(configured));
+  const withoutQwen = unique.filter((model) => !model.toLowerCase().includes("qwen"));
+  return withoutQwen.length > 0 ? withoutQwen : ["arcee-ai/trinity-large-preview:free"];
+})();
 const OCR_SPACE_API_URL = "https://api.ocr.space/parse/image";
 
 const MAX_TEXT_LENGTH = 15000;
@@ -32,6 +41,12 @@ const PUTER_MAX_RETRIES = 1; // Không retry, lỗi là fallback ngay
 const PUTER_RETRY_DELAY_MS = 2000; // Delay giữa các lần retry
 const ENABLE_ANSWER_SOLVING = process.env.AI_ENABLE_ANSWER_SOLVING !== "false";
 const SOLVE_BATCH_SIZE = 8;
+const ENABLE_PUTER_FOR_EXTRACTION = process.env.AI_ENABLE_PUTER_EXTRACTION !== "false";
+const EXTRACT_SOURCE_CONTEXT_MAX_CHARS = 3000;
+const RECOVERY_SOURCE_CONTEXT_MAX_CHARS = 2800;
+const SOLVE_SOURCE_CONTEXT_MAX_CHARS = 1400;
+const MAX_SOLVE_QUESTION_TEXT_CHARS = 320;
+const MAX_SOLVE_OPTION_TEXT_CHARS = 140;
 
 // OCR optimization settings
 const MAX_IMAGE_WIDTH = 1600; // Giảm kích thước để tăng tốc OCR
@@ -188,8 +203,111 @@ function chunkText(text: string) {
 }
 
 function extractJsonArray(raw: string) {
-  const match = raw.match(/\[([\s\S]*?)\]/);
-  return match ? match[0] : raw;
+  const normalized = raw
+    .replace(/```json/gi, "")
+    .replace(/```/g, "")
+    .trim();
+
+  const start = normalized.indexOf("[");
+  if (start < 0) return normalized;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < normalized.length; i++) {
+    const ch = normalized[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "[") depth++;
+    if (ch === "]") {
+      depth--;
+      if (depth === 0) {
+        return normalized.slice(start, i + 1);
+      }
+    }
+  }
+
+  // Keep partial segment for lenient recovery when model output is truncated.
+  return normalized.slice(start);
+}
+
+function repairJsonCandidate(candidate: string): string {
+  let repaired = candidate;
+  repaired = repaired.replace(/,\s*([}\]])/g, "$1");
+  repaired = repaired.replace(/\\(?!["\\/bfnrtu])/g, "\\\\");
+  return repaired;
+}
+
+function closeDanglingJson(candidate: string): string {
+  let inString = false;
+  let escaped = false;
+  const stack: string[] = [];
+
+  for (const ch of candidate) {
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "{" || ch === "[") stack.push(ch);
+    if (ch === "}" && stack[stack.length - 1] === "{") stack.pop();
+    if (ch === "]" && stack[stack.length - 1] === "[") stack.pop();
+  }
+
+  const closers = stack
+    .reverse()
+    .map((open) => (open === "{" ? "}" : "]"))
+    .join("");
+
+  return `${candidate}${closers}`;
+}
+
+function parseJsonLenient(raw: string): unknown {
+  const base = extractJsonArray(raw);
+  const attempts = [
+    base,
+    repairJsonCandidate(base),
+    closeDanglingJson(base),
+    closeDanglingJson(repairJsonCandidate(base)),
+  ];
+
+  let lastError: Error | null = null;
+  for (const candidate of attempts) {
+    try {
+      return JSON.parse(candidate);
+    } catch (error) {
+      lastError = error as Error;
+    }
+  }
+
+  throw lastError || new Error("Unable to parse AI JSON output");
 }
 
 function detectQuestionIndices(text: string): number[] {
@@ -220,6 +338,65 @@ function estimateQuestionCountInChunk(text: string): number {
 
   const estimated = Math.max(byIndices, byOptionSets, byLength);
   return Math.max(1, estimated);
+}
+
+function parseQuestionsHeuristically(text: string): ExtractedQuestion[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const results: ExtractedQuestion[] = [];
+  let current: ExtractedQuestion | null = null;
+  let currentOption: "A" | "B" | "C" | "D" | null = null;
+
+  const pushCurrent = () => {
+    if (!current) return;
+    if (!current.question.trim()) return;
+    results.push({
+      ...current,
+      question: current.question.trim(),
+      options: {
+        A: current.options.A.trim(),
+        B: current.options.B.trim(),
+        C: current.options.C.trim(),
+        D: current.options.D.trim(),
+      },
+    });
+  };
+
+  for (const line of lines) {
+    const questionStart = line.match(/^(?:Câu\s*)?(\d{1,3})\s*[\).:-]\s*(.*)$/i);
+    if (questionStart) {
+      pushCurrent();
+      current = {
+        source_index: Number.parseInt(questionStart[1], 10),
+        question: questionStart[2] || "",
+        options: { A: "", B: "", C: "", D: "" },
+        correct_answer: "A",
+      };
+      currentOption = null;
+      continue;
+    }
+
+    const optionMatch = line.match(/^([ABCD])\s*[\).:-]\s*(.*)$/i);
+    if (optionMatch && current) {
+      const key = optionMatch[1].toUpperCase() as "A" | "B" | "C" | "D";
+      current.options[key] = optionMatch[2] || "";
+      currentOption = key;
+      continue;
+    }
+
+    if (!current) continue;
+    if (currentOption) {
+      current.options[currentOption] = `${current.options[currentOption]} ${line}`.trim();
+    } else {
+      current.question = `${current.question} ${line}`.trim();
+    }
+  }
+
+  pushCurrent();
+  return normalizeQuestions(results);
 }
 
 type AiQuestionPayload = {
@@ -303,7 +480,29 @@ function extractAssistantText(content: unknown): string {
   return "";
 }
 
-async function callPuterQuestionExtractionModel(prompt: string): Promise<ExtractedQuestion[]> {
+function compactWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function clampText(text: string, maxChars: number): string {
+  const normalized = compactWhitespace(text);
+  if (normalized.length <= maxChars) return normalized;
+  if (maxChars <= 20) return normalized.slice(0, maxChars);
+  return `${normalized.slice(0, maxChars - 3)}...`;
+}
+
+function buildContextSnippet(text: string, maxChars: number): string {
+  const normalized = compactWhitespace(text);
+  if (normalized.length <= maxChars) return normalized;
+
+  const headChars = Math.floor(maxChars * 0.7);
+  const tailChars = Math.max(0, maxChars - headChars - 7);
+  const head = normalized.slice(0, headChars);
+  const tail = tailChars > 0 ? normalized.slice(-tailChars) : "";
+  return tail ? `${head} [...] ${tail}` : head;
+}
+
+async function callPuterQuestionExtractionModel(prompt: string, models: string[] = PUTER_TEXT_MODELS): Promise<ExtractedQuestion[]> {
   const puterToken = process.env.PUTER_AUTH_TOKEN;
   if (!puterToken) {
     aiLog("warn", "PUTER-EXTRACT", "Skip Puter: missing PUTER_AUTH_TOKEN (server-side Puter API requires auth)");
@@ -314,7 +513,7 @@ async function callPuterQuestionExtractionModel(prompt: string): Promise<Extract
   const requestPayload = (model: string) => ({
     model,
     temperature: 0,
-    max_tokens: 1800,
+    max_tokens: 1200,
     messages: [
       {
         role: "system",
@@ -325,7 +524,7 @@ async function callPuterQuestionExtractionModel(prompt: string): Promise<Extract
     ],
   });
 
-  for (const model of PUTER_TEXT_MODELS) {
+  for (const model of models) {
     const requiredModel = model;
     aiLog("info", "PUTER-EXTRACT", "Trying model", { model, required: requiredModel });
     
@@ -376,7 +575,7 @@ async function callPuterQuestionExtractionModel(prompt: string): Promise<Extract
         const data = await res.json();
         const raw = extractAssistantText(data.choices?.[0]?.message?.content || "");
         try {
-          const parsed = normalizeQuestions(JSON.parse(extractJsonArray(raw)));
+          const parsed = normalizeQuestions(parseJsonLenient(raw));
           if (parsed.length > 0) {
             aiLog("info", "PUTER-EXTRACT", "Model succeeded", { model, questions: parsed.length, attempt });
             return parsed;
@@ -429,32 +628,41 @@ async function callQuestionExtractionModel(prompt: string, preferredModel?: stri
   let puterFailure: HttpError | null = null;
   let openRouterFailure: HttpError | null = null;
 
-  // 1) Puter first với retry logic đã được handle bên trong callPuterQuestionExtractionModel
-  try {
-    aiLog("info", "EXTRACT", "Trying Puter first");
-    const puterParsed = await callPuterQuestionExtractionModel(prompt);
-    if (puterParsed.length > 0) {
-      aiLog("info", "EXTRACT", "Puter primary succeeded", { questions: puterParsed.length });
-      return puterParsed;
+  aiLog("info", "EXTRACT", "Extraction strategy initialized", {
+    lightweightMode: !ENABLE_PUTER_FOR_EXTRACTION,
+    puterEnabled: ENABLE_PUTER_FOR_EXTRACTION,
+    preferredModel: preferredModel || "(none)",
+    puterExtractionModels: PUTER_EXTRACTION_MODELS.join(","),
+  });
+
+  // 1) Puter for extraction is optional (default off to keep extraction lightweight).
+  if (ENABLE_PUTER_FOR_EXTRACTION) {
+    try {
+      aiLog("info", "EXTRACT", "Trying Puter first");
+      const puterParsed = await callPuterQuestionExtractionModel(prompt, PUTER_EXTRACTION_MODELS);
+      if (puterParsed.length > 0) {
+        aiLog("info", "EXTRACT", "Puter primary succeeded", { questions: puterParsed.length });
+        return puterParsed;
+      }
+      aiLog("info", "EXTRACT", "Puter returned no results, trying OpenRouter");
+    } catch (error) {
+      puterFailure = error as HttpError;
+      const isTimeout = puterFailure.status === 504;
+
+      if (isTimeout) {
+        aiLog("warn", "EXTRACT", "Puter failed after retries (timeout), fallback to OpenRouter", {
+          status: puterFailure.status,
+          message: puterFailure.message,
+        });
+      } else {
+        aiLog("warn", "EXTRACT", "Puter primary failed, fallback to OpenRouter", {
+          status: puterFailure.status,
+          message: puterFailure.message,
+        });
+      }
     }
-    // Nếu Puter trả về empty array (không phải error), vẫn fallback
-    aiLog("info", "EXTRACT", "Puter returned no results, trying OpenRouter");
-  } catch (error) {
-    puterFailure = error as HttpError;
-    const isTimeout = puterFailure.status === 504;
-    
-    // Log chi tiết hơn về lỗi
-    if (isTimeout) {
-      aiLog("warn", "EXTRACT", "Puter failed after retries (timeout), fallback to OpenRouter", {
-        status: puterFailure.status,
-        message: puterFailure.message,
-      });
-    } else {
-      aiLog("warn", "EXTRACT", "Puter primary failed, fallback to OpenRouter", {
-        status: puterFailure.status,
-        message: puterFailure.message,
-      });
-    }
+  } else {
+    aiLog("info", "EXTRACT", "Skip Puter extraction (lightweight mode)");
   }
 
   // 2) OpenRouter fallback
@@ -501,13 +709,22 @@ async function callQuestionExtractionModel(prompt: string, preferredModel?: stri
         const data = await res.json();
         const raw = data.choices?.[0]?.message?.content || "";
         try {
-          const parsed = normalizeQuestions(JSON.parse(extractJsonArray(raw)));
+          const parsed = normalizeQuestions(parseJsonLenient(raw));
           if (parsed.length > 0) {
             aiLog("info", "OPENROUTER-EXTRACT", "Model succeeded", { model, questions: parsed.length });
             return parsed;
           }
-        } catch {
-          // Try next model.
+          aiLog("warn", "OPENROUTER-EXTRACT", "Model returned empty parse result", { model });
+          lastError = Object.assign(new Error(`OpenRouter ${model} returned empty parse result`), { status: 422 }) as HttpError;
+        } catch (parseError) {
+          aiLog("warn", "OPENROUTER-EXTRACT", "Parse error", {
+            model,
+            error: (parseError as Error).message,
+          });
+          lastError = Object.assign(new Error(`OpenRouter ${model} parse error`), {
+            status: 422,
+            details: (parseError as Error).message,
+          }) as HttpError;
         }
       } catch (error) {
         const httpError = error as HttpError;
@@ -594,7 +811,7 @@ async function callQuestionExtractionModel(prompt: string, preferredModel?: stri
   const data = await res.json();
   const raw = data.choices?.[0]?.message?.content || "";
   try {
-    const parsed = normalizeQuestions(JSON.parse(extractJsonArray(raw)));
+    const parsed = normalizeQuestions(parseJsonLenient(raw));
     aiLog("info", "EXTRACT", "Groq fallback succeeded", { questions: parsed.length });
     return parsed;
   } catch {
@@ -617,7 +834,7 @@ function normalizeOptionLetter(value: unknown): "A" | "B" | "C" | "D" | null {
 function parseResolvedAnswers(raw: string, questionCount: number): Array<"A" | "B" | "C" | "D" | null> {
   let parsed: unknown = [];
   try {
-    parsed = JSON.parse(extractJsonArray(raw));
+    parsed = parseJsonLenient(raw);
   } catch {
     return Array.from({ length: questionCount }, () => null);
   }
@@ -644,6 +861,13 @@ async function resolveAnswersWithAi(
   preferredModel?: string
 ): Promise<ExtractedQuestion[]> {
   if (questions.length === 0) return questions;
+
+  aiLog("info", "SOLVE", "Solve strategy initialized", {
+    totalQuestions: questions.length,
+    batchSize: SOLVE_BATCH_SIZE,
+    preferredModel: preferredModel || "(none)",
+    puterTimeoutMs: PUTER_TIMEOUT_MS,
+  });
 
   if (questions.length > SOLVE_BATCH_SIZE) {
     aiLog("info", "SOLVE", "Large question set detected, solving in batches", {
@@ -672,10 +896,27 @@ Chỉ trả về JSON mảng theo schema:
 ]
 
 Danh sách câu hỏi:
-${JSON.stringify(questions.map((q, index) => ({ index, question: q.question, options: q.options })))}
+${JSON.stringify(
+  questions.map((q, index) => ({
+    index,
+    question: clampText(q.question, MAX_SOLVE_QUESTION_TEXT_CHARS),
+    options: {
+      A: clampText(q.options.A, MAX_SOLVE_OPTION_TEXT_CHARS),
+      B: clampText(q.options.B, MAX_SOLVE_OPTION_TEXT_CHARS),
+      C: clampText(q.options.C, MAX_SOLVE_OPTION_TEXT_CHARS),
+      D: clampText(q.options.D, MAX_SOLVE_OPTION_TEXT_CHARS),
+    },
+  }))
+)}
 
 Văn bản nguồn để đối chiếu:
-${sourceText}`;
+${buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS)}`;
+
+  aiLog("info", "SOLVE", "Prompt compacted", {
+    questions: questions.length,
+    sourceChars: sourceText.length,
+    sourceCharsSent: buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS).length,
+  });
 
   aiLog("info", "SOLVE", "Start resolving answers", { questions: questions.length });
   const openRouterKey = process.env.OPENROUTER_API_KEY;
@@ -706,7 +947,7 @@ ${sourceText}`;
             body: JSON.stringify({
               model,
               temperature: 0,
-              max_tokens: 1000,
+              max_tokens: 800,
               messages: [
                 {
                   role: "system",
@@ -785,7 +1026,7 @@ ${sourceText}`;
         body: JSON.stringify({
           model,
           temperature: 0,
-          max_tokens: 1000,
+          max_tokens: 800,
           messages: [
             {
               role: "system",
@@ -838,7 +1079,7 @@ ${sourceText}`;
     body: JSON.stringify({
       model: GROQ_TEXT_MODEL,
       temperature: 0,
-      max_tokens: 1000,
+      max_tokens: 800,
       messages: [
         {
           role: "system",
@@ -878,8 +1119,37 @@ ${sourceText}`;
 }
 
 async function generateQuestionsFromChunk(text: string, limit: number): Promise<ExtractedQuestion[]> {
+  aiLog("info", "PIPELINE", "Chunk extraction started", {
+    mode: ENABLE_PUTER_FOR_EXTRACTION ? "hybrid+puter-enabled" : "lightweight-preferred",
+    chunkChars: text.length,
+    limit,
+  });
+
+  const heuristic = parseQuestionsHeuristically(text).slice(0, limit);
+  aiLog("info", "PIPELINE", "Heuristic extraction result", {
+    extracted: heuristic.length,
+    limit,
+  });
+
+  if (heuristic.length >= limit) {
+    aiLog("info", "PIPELINE", "Heuristic extraction satisfied chunk", {
+      extracted: heuristic.length,
+      limit,
+    });
+
+    if (ENABLE_ANSWER_SOLVING) {
+      const solved = await resolveAnswersWithAi(heuristic, text, STEPFUN_TEXT_MODEL);
+      aiLog("info", "PIPELINE", "Chunk completed", { extracted: solved.length, solved: true, mode: "heuristic" });
+      return solved.slice(0, limit);
+    }
+
+    aiLog("info", "PIPELINE", "Chunk completed", { extracted: heuristic.length, solved: false, mode: "heuristic" });
+    return heuristic;
+  }
+
   const indices = detectQuestionIndices(text);
   const expected = indices.slice(0, limit);
+  const extractionSource = buildContextSnippet(text, EXTRACT_SOURCE_CONTEXT_MAX_CHARS);
   const extractionPrompt = `Nhiệm vụ: bóc tách các câu trắc nghiệm có sẵn từ văn bản, KHÔNG tự sáng tác câu mới.
 
 Yêu cầu bắt buộc:
@@ -903,17 +1173,33 @@ Chỉ số nhận diện được: ${expected.length ? expected.join(", ") : "(k
 Giới hạn tối đa ${limit} câu trong lần trả lời này.
 
 Văn bản nguồn:
-${text}`;
+${extractionSource}`;
+
+  aiLog("info", "PIPELINE", "Extraction prompt compacted", {
+    chunkChars: text.length,
+    sourceCharsSent: extractionSource.length,
+  });
 
   aiLog("info", "PIPELINE", "Start extraction for chunk", { chunkChars: text.length, limit });
   const extracted = await callQuestionExtractionModel(extractionPrompt);
   const picked = extracted.slice(0, limit);
+  aiLog("info", "PIPELINE", "AI extraction supplement result", {
+    extractedByAi: picked.length,
+    heuristicSeed: heuristic.length,
+    limit,
+  });
 
-  let merged: ExtractedQuestion[] = picked;
+  let merged: ExtractedQuestion[] = [...heuristic];
+  for (const q of picked) {
+    if (q.source_index && merged.some((it) => it.source_index === q.source_index)) continue;
+    if (merged.some((it) => it.question === q.question)) continue;
+    merged.push(q);
+    if (merged.length >= limit) break;
+  }
 
   if (expected.length > 0) {
     const seen = new Set<number>();
-    for (const q of picked) {
+    for (const q of merged) {
       if (q.source_index) seen.add(q.source_index);
     }
 
@@ -934,10 +1220,10 @@ Schema JSON:
 ]
 
 Văn bản nguồn:
-${text}`;
+${buildContextSnippet(text, RECOVERY_SOURCE_CONTEXT_MAX_CHARS)}`;
 
       const recovered = await callQuestionExtractionModel(recoveryPrompt, STEPFUN_TEXT_MODEL);
-      merged = [...picked, ...recovered].reduce<ExtractedQuestion[]>((acc, q) => {
+  merged = [...merged, ...recovered].reduce<ExtractedQuestion[]>((acc, q) => {
         if (q.source_index && acc.some((it) => it.source_index === q.source_index)) return acc;
         if (acc.some((it) => it.question === q.question)) return acc;
         acc.push(q);
@@ -955,7 +1241,7 @@ JSON hiện tại:
 ${JSON.stringify(merged)}
 
 Văn bản nguồn để đối chiếu:
-${text}`;
+${buildContextSnippet(text, RECOVERY_SOURCE_CONTEXT_MAX_CHARS)}`;
 
     const repaired = await callQuestionExtractionModel(repairPrompt, STEPFUN_TEXT_MODEL);
     if (repaired.length > 0) {
@@ -969,6 +1255,18 @@ ${text}`;
   }
 
   if (ENABLE_ANSWER_SOLVING) {
+    if (merged.length === 0) {
+      aiLog("warn", "PIPELINE", "Skip solve stage because extraction returned zero questions", {
+        source: "post-extraction",
+      });
+      aiLog("info", "PIPELINE", "Chunk completed", { extracted: 0, solved: false });
+      return [];
+    }
+
+    aiLog("info", "PIPELINE", "Starting solve stage", {
+      totalQuestions: merged.length,
+      source: "post-extraction",
+    });
     const solved = await resolveAnswersWithAi(merged, text, STEPFUN_TEXT_MODEL);
     aiLog("info", "PIPELINE", "Chunk completed", { extracted: solved.length, solved: true });
     return solved.slice(0, limit);
