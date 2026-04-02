@@ -365,15 +365,62 @@ function normalizeLatexText(text: string): string {
   if (!text) return text;
 
   return text
+    .replace(/\*\*/g, "")
     // Common corruption patterns from model outputs
     .replace(/\/\s*fraq/gi, "\\\\frac")
     .replace(/\/\s*frac/gi, "\\\\frac")
     .replace(/\\\s*fraq/gi, "\\\\frac")
     .replace(/\\\s*frac/gi, "\\\\frac")
+    .replace(/\bfrac\s*([0-9])\s*([0-9]{1,2})\b/gi, "\\\\frac{$1}{$2}")
     .replace(/\\\s*sqrt/gi, "\\\\sqrt")
     .replace(/\\\s*times/gi, "\\\\times")
     // Normalize escaped spacing like "\\ frac"
     .replace(/\\\s+([a-zA-Z]+)/g, "\\\\$1");
+}
+
+function splitBundledQuestionBlocks(text: string): string[] {
+  const markers = [...text.matchAll(/(?:^|\s)(?:\*\*)?Câu\s*\d+\s*[\).:]/gim)].map((m) => m.index || 0);
+  if (markers.length < 2) return [];
+
+  const blocks: string[] = [];
+  for (let i = 0; i < markers.length; i++) {
+    const start = markers[i];
+    const end = i + 1 < markers.length ? markers[i + 1] : text.length;
+    const block = text.slice(start, end).trim();
+    if (block) blocks.push(block);
+  }
+  return blocks;
+}
+
+function parseQuestionBlock(block: string): ExtractedQuestion | null {
+  const sourceIdxMatch = block.match(/Câu\s*(\d+)\s*[\).:]/i);
+  const sourceIndex = sourceIdxMatch ? Number.parseInt(sourceIdxMatch[1], 10) : NaN;
+
+  const optionRegex = /(?:\*\*)?\b([ABCD])\s*[\).:]\s*(?:\*\*)?/g;
+  const matches = [...block.matchAll(optionRegex)];
+  if (matches.length < 4) return null;
+
+  const firstOptionIndex = matches[0].index || 0;
+  const stemRaw = block.slice(0, firstOptionIndex).replace(/^(?:\*\*)?Câu\s*\d+\s*[\).:]\s*/i, "").trim();
+
+  const options: Record<"A" | "B" | "C" | "D", string> = { A: "", B: "", C: "", D: "" };
+  for (let i = 0; i < matches.length; i++) {
+    const key = (matches[i][1] || "").toUpperCase() as "A" | "B" | "C" | "D";
+    if (!["A", "B", "C", "D"].includes(key)) continue;
+    const valueStart = (matches[i].index || 0) + matches[i][0].length;
+    const valueEnd = i + 1 < matches.length ? (matches[i + 1].index || block.length) : block.length;
+    options[key] = normalizeLatexText(block.slice(valueStart, valueEnd).trim());
+  }
+
+  const question = normalizeLatexText(stemRaw);
+  if (!question) return null;
+
+  return {
+    ...(Number.isFinite(sourceIndex) && sourceIndex > 0 ? { source_index: sourceIndex } : {}),
+    question,
+    options,
+    correct_answer: "A",
+  };
 }
 
 function estimateQuestionCountInChunk(text: string): number {
@@ -501,13 +548,21 @@ type AiQuestionPayload = {
 function normalizeQuestions(raw: unknown): ExtractedQuestion[] {
   if (!Array.isArray(raw)) return [];
   const normalized = raw
-    .map<ExtractedQuestion | null>((candidate) => {
+    .flatMap<ExtractedQuestion>((candidate) => {
       const q = candidate as AiQuestionPayload;
       const sourceIndexRaw = q.source_index;
       const question = normalizeLatexText(q.question?.toString().trim() || "");
+      const bundledBlocks = splitBundledQuestionBlocks(question);
+      if (bundledBlocks.length > 0) {
+        const expanded = bundledBlocks
+          .map((block) => parseQuestionBlock(block))
+          .filter((item): item is ExtractedQuestion => item !== null);
+        if (expanded.length > 0) return expanded;
+      }
+
       const optionsRecord = q.options || {};
       const correctRaw = q.correct_answer?.toString().trim().toUpperCase();
-      if (!question) return null;
+      if (!question) return [];
       const sourceIndex = Number.parseInt(sourceIndexRaw?.toString() || "", 10);
       const opt: Record<"A" | "B" | "C" | "D", string> = {
         A: normalizeLatexText(optionsRecord.A?.toString().trim() || ""),
@@ -519,14 +574,18 @@ function normalizeQuestions(raw: unknown): ExtractedQuestion[] {
       const correctAnswer = ["A", "B", "C", "D"].includes(correctRaw || "")
         ? (correctRaw as "A" | "B" | "C" | "D")
         : firstNonEmpty;
-      return {
+      return [{
         ...(Number.isFinite(sourceIndex) && sourceIndex > 0 ? { source_index: sourceIndex } : {}),
         question,
         options: opt,
         correct_answer: correctAnswer,
-      } satisfies ExtractedQuestion;
+      } satisfies ExtractedQuestion];
     })
-    .filter((q): q is ExtractedQuestion => q !== null);
+    .filter((q) => {
+      if (!q.question?.trim()) return false;
+      const hasAnyOption = Object.values(q.options).some((v) => v.trim().length > 0);
+      return hasAnyOption;
+    });
 
   return normalized;
 }
