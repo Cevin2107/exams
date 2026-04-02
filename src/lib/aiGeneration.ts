@@ -8,11 +8,19 @@ const OPENROUTER_TEXT_MODELS = (process.env.AI_QUESTION_PARSER_MODELS || `${OPEN
   .map((x) => x.trim())
   .filter(Boolean);
 const PUTER_OPENAI_BASE_URL = "https://api.puter.com/puterai/openai/v1/chat/completions";
-const PUTER_TEXT_MODEL = process.env.AI_QUESTION_PUTER_MODEL || "qwen/qwen3.6-plus-preview:free";
-const PUTER_TEXT_MODELS = (process.env.AI_QUESTION_PUTER_MODELS || `${PUTER_TEXT_MODEL},arcee-ai/trinity-large-preview:free`)
-  .split(",")
-  .map((x) => x.trim())
-  .filter(Boolean);
+const QWEN_PRIMARY_MODEL = process.env.AI_QUESTION_QWEN_MODEL || "qwen/qwen3.6-plus-preview:free";
+const PUTER_TEXT_MODEL = process.env.AI_QUESTION_PUTER_MODEL || QWEN_PRIMARY_MODEL;
+const PUTER_TEXT_MODELS = (() => {
+  const configured = (process.env.AI_QUESTION_PUTER_MODELS || `${PUTER_TEXT_MODEL},arcee-ai/trinity-large-preview:free`)
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+  const unique = Array.from(new Set(configured));
+  const qwenFirst = unique.filter((model) => model.toLowerCase().includes("qwen"));
+  const others = unique.filter((model) => !model.toLowerCase().includes("qwen"));
+  return [...qwenFirst, ...others];
+})();
 const OCR_SPACE_API_URL = "https://api.ocr.space/parse/image";
 
 const MAX_TEXT_LENGTH = 15000;
@@ -20,9 +28,10 @@ const TEXT_CHUNK_SIZE = 3500;
 const OCR_TIMEOUT_MS = 22000;
 const AI_TIMEOUT_MS = 105000; // Tăng timeout để phù hợp với Puter timeout
 const PUTER_TIMEOUT_MS = 100000; // Timeout 100s cho Qwen
-const PUTER_MAX_RETRIES = 2; // Số lần retry khi timeout
+const PUTER_MAX_RETRIES = 1; // Không retry, lỗi là fallback ngay
 const PUTER_RETRY_DELAY_MS = 2000; // Delay giữa các lần retry
-const ENABLE_ANSWER_SOLVING = process.env.AI_ENABLE_ANSWER_SOLVING === "true";
+const ENABLE_ANSWER_SOLVING = process.env.AI_ENABLE_ANSWER_SOLVING !== "false";
+const SOLVE_BATCH_SIZE = 8;
 
 // OCR optimization settings
 const MAX_IMAGE_WIDTH = 1600; // Giảm kích thước để tăng tốc OCR
@@ -636,6 +645,25 @@ async function resolveAnswersWithAi(
 ): Promise<ExtractedQuestion[]> {
   if (questions.length === 0) return questions;
 
+  if (questions.length > SOLVE_BATCH_SIZE) {
+    aiLog("info", "SOLVE", "Large question set detected, solving in batches", {
+      total: questions.length,
+      batchSize: SOLVE_BATCH_SIZE,
+    });
+
+    const merged: ExtractedQuestion[] = [...questions];
+    for (let start = 0; start < questions.length; start += SOLVE_BATCH_SIZE) {
+      const end = Math.min(start + SOLVE_BATCH_SIZE, questions.length);
+      const batch = questions.slice(start, end);
+      const solvedBatch = await resolveAnswersWithAi(batch, sourceText, preferredModel);
+      for (let i = 0; i < solvedBatch.length; i++) {
+        merged[start + i] = solvedBatch[i];
+      }
+    }
+
+    return merged;
+  }
+
   const solvePrompt = `Hãy GIẢI và chọn đáp án đúng cho từng câu hỏi trắc nghiệm dưới đây.
 Không được bỏ sót câu nào.
 Chỉ trả về JSON mảng theo schema:
@@ -665,47 +693,81 @@ ${sourceText}`;
   } else {
     for (const model of PUTER_TEXT_MODELS) {
       aiLog("info", "PUTER-SOLVE", "Trying model", { model });
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${puterToken}`,
-      };
+      for (let attempt = 1; attempt <= PUTER_MAX_RETRIES; attempt++) {
+        try {
+          const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${puterToken}`,
+          };
 
-      const res = await fetchWithTimeout(PUTER_OPENAI_BASE_URL, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model,
-          temperature: 0,
-          max_tokens: 1000,
-          messages: [
-            {
-              role: "system",
-              content: "Bạn là bộ giải câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ theo schema index/correct_answer.",
-            },
-            { role: "user", content: solvePrompt },
-          ],
-        }),
-      }, AI_TIMEOUT_MS);
+          const res = await fetchWithTimeout(PUTER_OPENAI_BASE_URL, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              model,
+              temperature: 0,
+              max_tokens: 1000,
+              messages: [
+                {
+                  role: "system",
+                  content: "Bạn là bộ giải câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ theo schema index/correct_answer.",
+                },
+                { role: "user", content: solvePrompt },
+              ],
+            }),
+          }, PUTER_TIMEOUT_MS);
 
-      if (!res.ok) {
-        const body = await res.text();
-        puterFailure = Object.assign(new Error(`Puter ${model} solve error: ${res.status}`), {
-          status: res.status,
-          details: body,
-        }) as HttpError;
-        aiLog("warn", "PUTER-SOLVE", "Model failed", { model, status: res.status });
-        continue;
-      }
+          if (!res.ok) {
+            const body = await res.text();
+            puterFailure = Object.assign(new Error(`Puter ${model} solve error: ${res.status}`), {
+              status: res.status,
+              details: body,
+            }) as HttpError;
+            aiLog("warn", "PUTER-SOLVE", "Model failed", { model, attempt, status: res.status });
 
-      const data = await res.json();
-      const raw = extractAssistantText(data.choices?.[0]?.message?.content || "");
-      const resolved = parseResolvedAnswers(raw, questions.length);
-      if (resolved.some(Boolean)) {
-        aiLog("info", "PUTER-SOLVE", "Model succeeded", { model });
-        return questions.map((q, idx) => ({
-          ...q,
-          correct_answer: resolved[idx] || q.correct_answer,
-        }));
+            if ((res.status === 429 || res.status >= 500) && attempt < PUTER_MAX_RETRIES) {
+              const delay = PUTER_RETRY_DELAY_MS * attempt;
+              await new Promise((resolve) => setTimeout(resolve, delay));
+              continue;
+            }
+            break;
+          }
+
+          const data = await res.json();
+          const raw = extractAssistantText(data.choices?.[0]?.message?.content || "");
+          const resolved = parseResolvedAnswers(raw, questions.length);
+          if (resolved.some(Boolean)) {
+            aiLog("info", "PUTER-SOLVE", "Model succeeded", { model, attempt });
+            return questions.map((q, idx) => ({
+              ...q,
+              correct_answer: resolved[idx] || q.correct_answer,
+            }));
+          }
+
+          aiLog("warn", "PUTER-SOLVE", "No usable answers returned", { model, attempt });
+          if (attempt < PUTER_MAX_RETRIES) {
+            const delay = PUTER_RETRY_DELAY_MS * attempt;
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
+          }
+          break;
+        } catch (error) {
+          const httpError = error as HttpError;
+          puterFailure = httpError;
+          aiLog("warn", "PUTER-SOLVE", "Request error", {
+            model,
+            attempt,
+            status: httpError.status,
+            message: httpError.message,
+          });
+
+          if (httpError.status === 504 && attempt < PUTER_MAX_RETRIES) {
+            const delay = PUTER_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
+          }
+          break;
+        }
       }
     }
   }
