@@ -1,12 +1,13 @@
 import sharp from "sharp";
 
 const GROQ_TEXT_MODEL = "llama-3.1-8b-instant";
-const STEPFUN_TEXT_MODEL = "stepfun/step-3.5-flash:free";
-const OPENROUTER_TEXT_MODEL = process.env.AI_QUESTION_PARSER_MODEL || STEPFUN_TEXT_MODEL;
-const OPENROUTER_TEXT_MODELS = (process.env.AI_QUESTION_PARSER_MODELS || `${OPENROUTER_TEXT_MODEL}`)
+const GROQ_SOLVE_MODEL = process.env.GROQ_SOLVE_MODEL || "qwen/qwen3-32b";
+const EXTRACT_GROQ_RETRIES = 2;
+const OPENROUTER_SOLVE_MODEL = process.env.MATH_SOLVER_MODEL || "google/gemma-3-27b-it:free";
+const OPENROUTER_SOLVE_MODELS = (process.env.MATH_SOLVER_MODELS || `${OPENROUTER_SOLVE_MODEL}`)
   .split(",")
   .map((x) => x.trim())
-  .filter(Boolean);
+  .filter((x) => Boolean(x) && x !== "stepfun/step-3.5-flash:free");
 const PUTER_OPENAI_BASE_URL = "https://api.puter.com/puterai/openai/v1/chat/completions";
 const QWEN_PRIMARY_MODEL = process.env.AI_QUESTION_QWEN_MODEL || "qwen/qwen3.6-plus-preview:free";
 const PUTER_TEXT_MODEL = process.env.AI_QUESTION_PUTER_MODEL || QWEN_PRIMARY_MODEL;
@@ -98,6 +99,7 @@ export interface GeneratedQuestion {
   question: string;
   options: Record<"A" | "B" | "C" | "D", string>;
   correct_answer: "A" | "B" | "C" | "D";
+  ai_solve_status?: "solved" | "unsolved";
 }
 
 interface OcrResult {
@@ -640,198 +642,73 @@ async function callPuterQuestionExtractionModel(prompt: string, models: string[]
 }
 
 async function callQuestionExtractionModel(prompt: string, preferredModel?: string): Promise<ExtractedQuestion[]> {
-  let puterFailure: HttpError | null = null;
-  let openRouterFailure: HttpError | null = null;
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error("Thiếu GROQ_API_KEY");
 
   aiLog("info", "EXTRACT", "Extraction strategy initialized", {
-    lightweightMode: !ENABLE_PUTER_FOR_EXTRACTION,
-    puterEnabled: ENABLE_PUTER_FOR_EXTRACTION,
-    preferredModel: preferredModel || "(none)",
-    puterExtractionModels: PUTER_EXTRACTION_MODELS.join(","),
+    provider: "groq-only",
+    model: GROQ_TEXT_MODEL,
+    retries: EXTRACT_GROQ_RETRIES,
+    preferredModel: preferredModel || "(ignored)",
   });
 
-  // 1) Puter for extraction is optional (default off to keep extraction lightweight).
-  if (ENABLE_PUTER_FOR_EXTRACTION) {
+  let lastError: HttpError | null = null;
+
+  for (let attempt = 1; attempt <= EXTRACT_GROQ_RETRIES; attempt++) {
     try {
-      aiLog("info", "EXTRACT", "Trying Puter first");
-      const puterParsed = await callPuterQuestionExtractionModel(prompt, PUTER_EXTRACTION_MODELS);
-      if (puterParsed.length > 0) {
-        aiLog("info", "EXTRACT", "Puter primary succeeded", { questions: puterParsed.length });
-        return puterParsed;
-      }
-      aiLog("info", "EXTRACT", "Puter returned no results, trying OpenRouter");
-    } catch (error) {
-      puterFailure = error as HttpError;
-      const isTimeout = puterFailure.status === 504;
+      aiLog("info", "GROQ-EXTRACT", "Trying model", { model: GROQ_TEXT_MODEL, attempt });
+      const res = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: GROQ_TEXT_MODEL,
+          temperature: 0,
+          max_tokens: 1200,
+          messages: [
+            {
+              role: "system",
+              content:
+                "Bạn là bộ trích xuất câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ, không thêm chữ ngoài JSON. Giữ nguyên tiếng Việt và giữ nguyên ký hiệu LaTeX (ví dụ $...$, \\\\(...\\\\), \\\\[...\\\\], \\\\frac).",
+            },
+            { role: "user", content: prompt },
+          ],
+        }),
+      }, AI_TIMEOUT_MS);
 
-      if (isTimeout) {
-        aiLog("warn", "EXTRACT", "Puter failed after retries (timeout), fallback to OpenRouter", {
-          status: puterFailure.status,
-          message: puterFailure.message,
-        });
+      if (!res.ok) {
+        const body = await res.text();
+        lastError = Object.assign(new Error(`Groq extract error: ${res.status}`), {
+          details: body,
+          status: res.status,
+        }) as HttpError;
+        aiLog("warn", "GROQ-EXTRACT", "Request failed", { status: res.status, attempt });
       } else {
-        aiLog("warn", "EXTRACT", "Puter primary failed, fallback to OpenRouter", {
-          status: puterFailure.status,
-          message: puterFailure.message,
-        });
-      }
-    }
-  } else {
-    aiLog("info", "EXTRACT", "Skip Puter extraction (lightweight mode)");
-  }
-
-  // 2) OpenRouter fallback
-  const openRouterKey = process.env.OPENROUTER_API_KEY;
-  if (openRouterKey) {
-    aiLog("info", "EXTRACT", "Trying OpenRouter fallback");
-    const modelsToTry = [preferredModel, ...OPENROUTER_TEXT_MODELS].filter(
-      (m, idx, arr): m is string => Boolean(m) && arr.indexOf(m) === idx
-    );
-
-    let lastError: HttpError | null = null;
-
-    for (const model of modelsToTry) {
-      try {
-        aiLog("info", "OPENROUTER-EXTRACT", "Trying model", { model });
-        const res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${openRouterKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            temperature: 0,
-            max_tokens: 1800,
-            messages: [
-              {
-                role: "system",
-                content:
-                  "Bạn là bộ trích xuất câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ, không thêm chữ ngoài JSON. Giữ nguyên tiếng Việt và giữ nguyên ký hiệu LaTeX (ví dụ $...$, \\\\(...\\\\), \\\\[...\\\\], \\\\frac).",
-              },
-              { role: "user", content: prompt },
-            ],
-          }),
-        }, AI_TIMEOUT_MS);
-
-        if (!res.ok) {
-          const body = await res.text();
-          aiLog("warn", "OPENROUTER-EXTRACT", "Model failed", { model, status: res.status });
-          lastError = Object.assign(new Error(`OpenRouter ${model} error: ${res.status}`), { details: body, status: res.status });
-          continue;
-        }
-
         const data = await res.json();
         const raw = data.choices?.[0]?.message?.content || "";
-        try {
-          const parsed = normalizeQuestions(parseJsonLenient(raw));
-          if (parsed.length > 0) {
-            aiLog("info", "OPENROUTER-EXTRACT", "Model succeeded", { model, questions: parsed.length });
-            return parsed;
-          }
-          aiLog("warn", "OPENROUTER-EXTRACT", "Model returned empty parse result", { model });
-          lastError = Object.assign(new Error(`OpenRouter ${model} returned empty parse result`), { status: 422 }) as HttpError;
-        } catch (parseError) {
-          aiLog("warn", "OPENROUTER-EXTRACT", "Parse error", {
-            model,
-            error: (parseError as Error).message,
-          });
-          lastError = Object.assign(new Error(`OpenRouter ${model} parse error`), {
-            status: 422,
-            details: (parseError as Error).message,
-          }) as HttpError;
+        const parsed = normalizeQuestions(parseJsonLenient(raw));
+        if (parsed.length > 0) {
+          aiLog("info", "GROQ-EXTRACT", "Model succeeded", { attempt, questions: parsed.length });
+          return parsed;
         }
-      } catch (error) {
-        const httpError = error as HttpError;
-        aiLog("warn", "OPENROUTER-EXTRACT", "Request error", {
-          model,
-          status: httpError.status,
-          message: httpError.message,
-        });
-        lastError = httpError;
-        continue;
+        lastError = Object.assign(new Error("Groq extract returned empty result"), { status: 422 }) as HttpError;
+        aiLog("warn", "GROQ-EXTRACT", "Parsed but empty", { attempt });
       }
-    }
-
-    if (lastError) {
-      const message = lastError.status === 401 ? "OpenRouter 401 (OPENROUTER_API_KEY không hợp lệ hoặc chưa nạp)" : (lastError.message || "OpenRouter error");
-      aiLog("warn", "EXTRACT", "OpenRouter failed, fallback to Groq", {
-        status: lastError.status,
-        message,
+    } catch (error) {
+      const httpError = error as HttpError;
+      lastError = httpError;
+      aiLog("warn", "GROQ-EXTRACT", "Request error", {
+        attempt,
+        status: httpError.status,
+        message: httpError.message,
       });
-      openRouterFailure = Object.assign(new Error(message), { details: lastError.details, status: lastError.status }) as HttpError;
     }
-  } else {
-    aiLog("warn", "EXTRACT", "OPENROUTER_API_KEY missing, skip OpenRouter");
   }
 
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) {
-    if (puterFailure) throw puterFailure;
-    if (openRouterFailure) throw openRouterFailure;
-    throw new Error("Thiếu GROQ_API_KEY");
-  }
-
-  // 3) Groq fallback
-  aiLog("info", "EXTRACT", "Trying Groq fallback", { model: GROQ_TEXT_MODEL });
-
-  const res = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: GROQ_TEXT_MODEL,
-      temperature: 0,
-      max_tokens: 1800,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Bạn là bộ trích xuất câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ, không thêm chữ ngoài JSON. Giữ nguyên tiếng Việt và giữ nguyên ký hiệu LaTeX (ví dụ $...$, \\\\(...\\\\), \\\\[...\\\\], \\\\frac).",
-        },
-        { role: "user", content: prompt },
-      ],
-    }),
-  }, AI_TIMEOUT_MS);
-
-  if (!res.ok) {
-    const body = await res.text();
-    const openRouterHint = openRouterFailure?.status === 429
-      ? " | OpenRouter đang bị rate limit 429"
-      : "";
-    const puterHint = puterFailure ? " | Puter fallback thất bại" : "";
-    const message = res.status === 401
-      ? "Groq text 401 (GROQ_API_KEY không hợp lệ hoặc chưa nạp)"
-      : `Groq text error: ${res.status}${openRouterHint}${puterHint}`;
-
-    const detailLines: string[] = [];
-    if (openRouterFailure?.details) {
-      detailLines.push(`OpenRouter failure: ${openRouterFailure.details}`);
-    }
-    if (puterFailure?.details) {
-      detailLines.push(`Puter failure: ${puterFailure.details}`);
-    }
-    detailLines.push(`Groq failure: ${body}`);
-
-    const error: HttpError = Object.assign(new Error(message), {
-      details: detailLines.join("\n"),
-      status: res.status,
-    });
-    aiLog("error", "EXTRACT", "Groq fallback failed", { status: res.status });
-    throw error;
-  }
-
-  const data = await res.json();
-  const raw = data.choices?.[0]?.message?.content || "";
-  try {
-    const parsed = normalizeQuestions(parseJsonLenient(raw));
-    aiLog("info", "EXTRACT", "Groq fallback succeeded", { questions: parsed.length });
-    return parsed;
-  } catch {
-    return [];
-  }
+  if (lastError) throw lastError;
+  return [];
 }
 
 type AnswerResolutionPayload = {
@@ -870,6 +747,36 @@ function parseResolvedAnswers(raw: string, questionCount: number): Array<"A" | "
   return resolved;
 }
 
+function applySolveResults(
+  questions: ExtractedQuestion[],
+  resolved: Array<"A" | "B" | "C" | "D" | null>
+): ExtractedQuestion[] {
+  return questions.map((q, idx) => {
+    const answer = resolved[idx];
+    if (answer) {
+      return {
+        ...q,
+        correct_answer: answer,
+        ai_solve_status: "solved",
+      };
+    }
+
+    return {
+      ...q,
+      correct_answer: "A",
+      ai_solve_status: "unsolved",
+    };
+  });
+}
+
+function markAllUnsolved(questions: ExtractedQuestion[]): ExtractedQuestion[] {
+  return questions.map((q) => ({
+    ...q,
+    correct_answer: "A",
+    ai_solve_status: "unsolved",
+  }));
+}
+
 async function resolveAnswersWithAi(
   questions: ExtractedQuestion[],
   sourceText: string,
@@ -882,7 +789,7 @@ async function resolveAnswersWithAi(
     aiLog("warn", "SOLVE", "Skip solve due low remaining budget", {
       remainingMs: remainingBudgetMs(deadlineAt),
     });
-    return questions;
+    return markAllUnsolved(questions);
   }
 
   aiLog("info", "SOLVE", "Solve strategy initialized", {
@@ -898,7 +805,7 @@ async function resolveAnswersWithAi(
       batchSize: SOLVE_BATCH_SIZE,
     });
 
-    const merged: ExtractedQuestion[] = [...questions];
+    const merged: ExtractedQuestion[] = markAllUnsolved(questions);
     for (let start = 0; start < questions.length; start += SOLVE_BATCH_SIZE) {
       const end = Math.min(start + SOLVE_BATCH_SIZE, questions.length);
       const batch = questions.slice(start, end);
@@ -950,7 +857,7 @@ ${buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS)}`;
 
   aiLog("info", "SOLVE", "Start resolving answers", { questions: questions.length });
   const openRouterKey = process.env.OPENROUTER_API_KEY;
-  const modelsToTry = [preferredModel, ...OPENROUTER_TEXT_MODELS].filter(
+  const modelsToTry = [preferredModel, ...OPENROUTER_SOLVE_MODELS].filter(
     (m, idx, arr): m is string => Boolean(m) && arr.indexOf(m) === idx
   );
 
@@ -1009,10 +916,7 @@ ${buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS)}`;
           const resolved = parseResolvedAnswers(raw, questions.length);
           if (resolved.some(Boolean)) {
             aiLog("info", "PUTER-SOLVE", "Model succeeded", { model, attempt });
-            return questions.map((q, idx) => ({
-              ...q,
-              correct_answer: resolved[idx] || q.correct_answer,
-            }));
+            return applySolveResults(questions, resolved);
           }
 
           aiLog("warn", "PUTER-SOLVE", "No usable answers returned", { model, attempt });
@@ -1082,10 +986,7 @@ ${buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS)}`;
       const resolved = parseResolvedAnswers(raw, questions.length);
       if (resolved.some(Boolean)) {
         aiLog("info", "OPENROUTER-SOLVE", "Model succeeded", { model });
-        return questions.map((q, idx) => ({
-          ...q,
-          correct_answer: resolved[idx] || q.correct_answer,
-        }));
+        return applySolveResults(questions, resolved);
       }
     }
   } else {
@@ -1100,62 +1001,62 @@ ${buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS)}`;
     aiLog("warn", "GROQ-SOLVE", "Skip Groq solve due low remaining budget", {
       remainingMs: remainingBudgetMs(deadlineAt),
     });
-    return questions;
+    return markAllUnsolved(questions);
   }
 
   const groqKey = process.env.GROQ_API_KEY;
   if (!groqKey) {
     aiLog("warn", "GROQ-SOLVE", "GROQ_API_KEY missing, skip Groq solve");
-    return questions;
+    return markAllUnsolved(questions);
   }
 
-  aiLog("info", "GROQ-SOLVE", "Trying Groq solve fallback", { model: GROQ_TEXT_MODEL });
-  const groqRes = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${groqKey}`,
-    },
-    body: JSON.stringify({
-      model: GROQ_TEXT_MODEL,
-      temperature: 0,
-      max_tokens: 800,
-      messages: [
-        {
-          role: "system",
-          content: "Bạn là bộ giải câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ theo schema index/correct_answer.",
-        },
-        { role: "user", content: solvePrompt },
-      ],
-    }),
-  }, AI_TIMEOUT_MS);
+  const groqModels = [GROQ_SOLVE_MODEL, GROQ_TEXT_MODEL].filter((m, idx, arr) => Boolean(m) && arr.indexOf(m) === idx);
+  for (const model of groqModels) {
+    aiLog("info", "GROQ-SOLVE", "Trying Groq solve model", { model });
+    const groqRes = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${groqKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        max_tokens: 700,
+        messages: [
+          {
+            role: "system",
+            content: "Bạn là bộ giải câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ theo schema index/correct_answer.",
+          },
+          { role: "user", content: solvePrompt },
+        ],
+      }),
+    }, AI_TIMEOUT_MS);
 
-  if (!groqRes.ok) {
-    const body = await groqRes.text();
-    aiLog("error", "GROQ-SOLVE", "Groq solve failed", { status: groqRes.status });
-    const detail: string[] = [];
-    if (openRouterFailure?.details) detail.push(`OpenRouter solve failure: ${openRouterFailure.details}`);
-    if (puterFailure?.details) detail.push(`Puter solve failure: ${puterFailure.details}`);
-    detail.push(`Groq solve failure: ${body}`);
-    throw Object.assign(new Error(`Không thể giải đáp án bằng cả 3 AI (Groq status ${groqRes.status})`), {
-      details: detail.join("\n"),
-      status: groqRes.status,
-    }) as HttpError;
+    if (!groqRes.ok) {
+      const body = await groqRes.text();
+      aiLog("warn", "GROQ-SOLVE", "Groq model failed", { model, status: groqRes.status });
+      openRouterFailure = Object.assign(new Error(`Groq ${model} solve error: ${groqRes.status}`), {
+        status: groqRes.status,
+        details: body,
+      }) as HttpError;
+      continue;
+    }
+
+    const groqData = await groqRes.json();
+    const groqRaw = extractAssistantText(groqData.choices?.[0]?.message?.content || "");
+    const groqResolved = parseResolvedAnswers(groqRaw, questions.length);
+    if (groqResolved.some(Boolean)) {
+      aiLog("info", "GROQ-SOLVE", "Groq solve succeeded", {
+        model,
+        solved: groqResolved.filter(Boolean).length,
+      });
+      return applySolveResults(questions, groqResolved);
+    }
   }
 
-  const groqData = await groqRes.json();
-  const groqRaw = extractAssistantText(groqData.choices?.[0]?.message?.content || "");
-  const groqResolved = parseResolvedAnswers(groqRaw, questions.length);
-  if (groqResolved.some(Boolean)) {
-    aiLog("info", "GROQ-SOLVE", "Groq solve succeeded", { solved: groqResolved.filter(Boolean).length });
-    return questions.map((q, idx) => ({
-      ...q,
-      correct_answer: groqResolved[idx] || q.correct_answer,
-    }));
-  }
-
-  aiLog("warn", "SOLVE", "All solver providers returned no usable answer mapping; keeping current answers");
-  return questions;
+  aiLog("warn", "SOLVE", "All solver providers returned no usable answer mapping; mark unresolved as A");
+  return markAllUnsolved(questions);
 }
 
 async function generateQuestionsFromChunk(text: string, limit: number, deadlineAt?: number): Promise<ExtractedQuestion[]> {
@@ -1178,7 +1079,7 @@ async function generateQuestionsFromChunk(text: string, limit: number, deadlineA
     });
 
     if (ENABLE_ANSWER_SOLVING) {
-      const solved = await resolveAnswersWithAi(heuristic, text, STEPFUN_TEXT_MODEL, deadlineAt);
+      const solved = await resolveAnswersWithAi(heuristic, text, undefined, deadlineAt);
       aiLog("info", "PIPELINE", "Chunk completed", { extracted: solved.length, solved: true, mode: "heuristic" });
       return solved.slice(0, limit);
     }
@@ -1270,7 +1171,7 @@ Schema JSON:
 Văn bản nguồn:
 ${buildContextSnippet(text, RECOVERY_SOURCE_CONTEXT_MAX_CHARS)}`;
 
-      const recovered = await callQuestionExtractionModel(recoveryPrompt, STEPFUN_TEXT_MODEL);
+      const recovered = await callQuestionExtractionModel(recoveryPrompt);
   merged = [...merged, ...recovered].reduce<ExtractedQuestion[]>((acc, q) => {
         if (q.source_index && acc.some((it) => it.source_index === q.source_index)) return acc;
         if (acc.some((it) => it.question === q.question)) return acc;
@@ -1286,7 +1187,7 @@ ${buildContextSnippet(text, RECOVERY_SOURCE_CONTEXT_MAX_CHARS)}`;
   }
 
   if (needsLatexRepair(merged) && hasTimeBudget(deadlineAt, MIN_REMAINING_FOR_RECOVERY_MS)) {
-    aiLog("info", "PIPELINE", "Detected broken LaTeX, running repair with Stepfun");
+    aiLog("info", "PIPELINE", "Detected broken LaTeX, running repair");
     const repairPrompt = `Sửa lỗi LaTeX cho các câu hỏi sau và giữ nguyên nghĩa tiếng Việt. Không bỏ sót câu nào, không thêm câu mới.
 Trả về JSON đúng schema cũ. Nếu có source_index thì giữ nguyên source_index.
 
@@ -1296,7 +1197,7 @@ ${JSON.stringify(merged)}
 Văn bản nguồn để đối chiếu:
 ${buildContextSnippet(text, RECOVERY_SOURCE_CONTEXT_MAX_CHARS)}`;
 
-    const repaired = await callQuestionExtractionModel(repairPrompt, STEPFUN_TEXT_MODEL);
+    const repaired = await callQuestionExtractionModel(repairPrompt);
     if (repaired.length > 0) {
       merged = repaired.reduce<ExtractedQuestion[]>((acc, q) => {
         if (q.source_index && acc.some((it) => it.source_index === q.source_index)) return acc;
@@ -1324,7 +1225,7 @@ ${buildContextSnippet(text, RECOVERY_SOURCE_CONTEXT_MAX_CHARS)}`;
       totalQuestions: merged.length,
       source: "post-extraction",
     });
-    const solved = await resolveAnswersWithAi(merged, text, STEPFUN_TEXT_MODEL, deadlineAt);
+    const solved = await resolveAnswersWithAi(merged, text, undefined, deadlineAt);
     aiLog("info", "PIPELINE", "Chunk completed", { extracted: solved.length, solved: true });
     return solved.slice(0, limit);
   }
@@ -1460,7 +1361,7 @@ Schema JSON:
 Văn bản nguồn:
 ${cleanedText}`;
 
-      const recovered = await callQuestionExtractionModel(recoveryPrompt, STEPFUN_TEXT_MODEL);
+      const recovered = await callQuestionExtractionModel(recoveryPrompt);
       for (const q of recovered) {
         if (q.source_index && unique.some((it) => it.source_index === q.source_index)) continue;
         if (
