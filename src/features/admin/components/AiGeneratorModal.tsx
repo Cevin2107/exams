@@ -128,7 +128,7 @@ export function AiGeneratorModal({ assignmentId, isOpen, onClose, onSuccess }: A
       setStatus("done");
       setMessage(`Đã tạo ${data.questions?.length || 0} câu hỏi`);
     } catch (err: any) {
-      console.error(err);
+      console.warn("AI generate handled error:", err);
       setProgress(100);
       setStatus("error");
       setMessage(err.message || "Không thể sinh câu hỏi. Vui lòng thử lại.");

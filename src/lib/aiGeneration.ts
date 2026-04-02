@@ -327,6 +327,26 @@ function parseJsonLenient(raw: string): unknown {
   throw lastError || new Error("Unable to parse AI JSON output");
 }
 
+function parseProviderResponseLenient(raw: string): unknown {
+  const attempts = [
+    raw,
+    repairJsonCandidate(raw),
+    closeDanglingJson(raw),
+    closeDanglingJson(repairJsonCandidate(raw)),
+  ];
+
+  let lastError: Error | null = null;
+  for (const candidate of attempts) {
+    try {
+      return JSON.parse(candidate);
+    } catch (error) {
+      lastError = error as Error;
+    }
+  }
+
+  throw lastError || new Error("Unable to parse provider response JSON");
+}
+
 function detectQuestionIndices(text: string): number[] {
   const regex = /(?:^|\n)\s*(?:Câu\s*)?(\d{1,3})\s*[\).:-]/gim;
   const found = new Set<number>();
@@ -686,15 +706,26 @@ async function callQuestionExtractionModel(prompt: string, preferredModel?: stri
         }) as HttpError;
         aiLog("warn", "GROQ-EXTRACT", "Request failed", { status: res.status, attempt });
       } else {
-        const data = await res.json();
-        const raw = data.choices?.[0]?.message?.content || "";
-        const parsed = normalizeQuestions(parseJsonLenient(raw));
-        if (parsed.length > 0) {
-          aiLog("info", "GROQ-EXTRACT", "Model succeeded", { attempt, questions: parsed.length });
-          return parsed;
+        const responseText = await res.text();
+        try {
+          const data = parseProviderResponseLenient(responseText) as {
+            choices?: Array<{ message?: { content?: unknown } }>;
+          };
+          const raw = extractAssistantText(data.choices?.[0]?.message?.content || "");
+          const parsed = normalizeQuestions(parseJsonLenient(raw));
+          if (parsed.length > 0) {
+            aiLog("info", "GROQ-EXTRACT", "Model succeeded", { attempt, questions: parsed.length });
+            return parsed;
+          }
+          lastError = Object.assign(new Error("Groq extract returned empty result"), { status: 422 }) as HttpError;
+          aiLog("warn", "GROQ-EXTRACT", "Parsed but empty", { attempt });
+        } catch (parseError) {
+          lastError = Object.assign(new Error((parseError as Error).message), { status: 422 }) as HttpError;
+          aiLog("warn", "GROQ-EXTRACT", "Parse error", {
+            attempt,
+            error: (parseError as Error).message,
+          });
         }
-        lastError = Object.assign(new Error("Groq extract returned empty result"), { status: 422 }) as HttpError;
-        aiLog("warn", "GROQ-EXTRACT", "Parsed but empty", { attempt });
       }
     } catch (error) {
       const httpError = error as HttpError;
@@ -1061,7 +1092,7 @@ ${buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS)}`;
 
 async function generateQuestionsFromChunk(text: string, limit: number, deadlineAt?: number): Promise<ExtractedQuestion[]> {
   aiLog("info", "PIPELINE", "Chunk extraction started", {
-    mode: ENABLE_PUTER_FOR_EXTRACTION ? "hybrid+puter-enabled" : "lightweight-preferred",
+    mode: "groq-only",
     chunkChars: text.length,
     limit,
   });
@@ -1130,8 +1161,15 @@ ${extractionSource}`;
   }
 
   aiLog("info", "PIPELINE", "Start extraction for chunk", { chunkChars: text.length, limit });
-  const extracted = await callQuestionExtractionModel(extractionPrompt);
-  const picked = extracted.slice(0, limit);
+  let picked: ExtractedQuestion[] = [];
+  try {
+    const extracted = await callQuestionExtractionModel(extractionPrompt);
+    picked = extracted.slice(0, limit);
+  } catch (error) {
+    aiLog("warn", "PIPELINE", "AI extraction failed, continue with heuristic", {
+      message: (error as Error).message,
+    });
+  }
   aiLog("info", "PIPELINE", "AI extraction supplement result", {
     extractedByAi: picked.length,
     heuristicSeed: heuristic.length,
@@ -1171,8 +1209,15 @@ Schema JSON:
 Văn bản nguồn:
 ${buildContextSnippet(text, RECOVERY_SOURCE_CONTEXT_MAX_CHARS)}`;
 
-      const recovered = await callQuestionExtractionModel(recoveryPrompt);
-  merged = [...merged, ...recovered].reduce<ExtractedQuestion[]>((acc, q) => {
+      let recovered: ExtractedQuestion[] = [];
+      try {
+        recovered = await callQuestionExtractionModel(recoveryPrompt);
+      } catch (error) {
+        aiLog("warn", "PIPELINE", "Recovery extraction failed, keep current merged set", {
+          message: (error as Error).message,
+        });
+      }
+      merged = [...merged, ...recovered].reduce<ExtractedQuestion[]>((acc, q) => {
         if (q.source_index && acc.some((it) => it.source_index === q.source_index)) return acc;
         if (acc.some((it) => it.question === q.question)) return acc;
         acc.push(q);
@@ -1197,7 +1242,14 @@ ${JSON.stringify(merged)}
 Văn bản nguồn để đối chiếu:
 ${buildContextSnippet(text, RECOVERY_SOURCE_CONTEXT_MAX_CHARS)}`;
 
-    const repaired = await callQuestionExtractionModel(repairPrompt);
+    let repaired: ExtractedQuestion[] = [];
+    try {
+      repaired = await callQuestionExtractionModel(repairPrompt);
+    } catch (error) {
+      aiLog("warn", "PIPELINE", "Latex repair failed, keep unrepaired set", {
+        message: (error as Error).message,
+      });
+    }
     if (repaired.length > 0) {
       merged = repaired.reduce<ExtractedQuestion[]>((acc, q) => {
         if (q.source_index && acc.some((it) => it.source_index === q.source_index)) return acc;
@@ -1361,7 +1413,14 @@ Schema JSON:
 Văn bản nguồn:
 ${cleanedText}`;
 
-      const recovered = await callQuestionExtractionModel(recoveryPrompt);
+      let recovered: ExtractedQuestion[] = [];
+      try {
+        recovered = await callQuestionExtractionModel(recoveryPrompt);
+      } catch (error) {
+        aiLog("warn", "PIPELINE", "Final recovery failed, return current unique set", {
+          message: (error as Error).message,
+        });
+      }
       for (const q of recovered) {
         if (q.source_index && unique.some((it) => it.source_index === q.source_index)) continue;
         if (
