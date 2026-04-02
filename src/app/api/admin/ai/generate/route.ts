@@ -3,7 +3,7 @@ import { checkAdminAuth } from "@/lib/adminAuth";
 import { buildQuestionsFromUploads } from "@/lib/aiGeneration";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 export async function POST(req: NextRequest) {
   const isAuth = await checkAdminAuth();

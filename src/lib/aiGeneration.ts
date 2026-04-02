@@ -31,12 +31,17 @@ const PUTER_EXTRACTION_MODELS = (() => {
   return withoutQwen.length > 0 ? withoutQwen : ["arcee-ai/trinity-large-preview:free"];
 })();
 const OCR_SPACE_API_URL = "https://api.ocr.space/parse/image";
+const IS_VERCEL_RUNTIME = process.env.VERCEL === "1" || Boolean(process.env.VERCEL_ENV);
+const REQUEST_TIME_BUDGET_MS = IS_VERCEL_RUNTIME ? 55000 : 180000;
+const MIN_REMAINING_FOR_EXTRACTION_MS = IS_VERCEL_RUNTIME ? 18000 : 10000;
+const MIN_REMAINING_FOR_RECOVERY_MS = IS_VERCEL_RUNTIME ? 15000 : 8000;
+const MIN_REMAINING_FOR_SOLVE_MS = IS_VERCEL_RUNTIME ? 20000 : 10000;
 
 const MAX_TEXT_LENGTH = 15000;
 const TEXT_CHUNK_SIZE = 3500;
-const OCR_TIMEOUT_MS = 22000;
-const AI_TIMEOUT_MS = 105000; // Tăng timeout để phù hợp với Puter timeout
-const PUTER_TIMEOUT_MS = 100000; // Timeout 100s cho Qwen
+const OCR_TIMEOUT_MS = IS_VERCEL_RUNTIME ? 14000 : 22000;
+const AI_TIMEOUT_MS = IS_VERCEL_RUNTIME ? 18000 : 105000;
+const PUTER_TIMEOUT_MS = IS_VERCEL_RUNTIME ? 22000 : 100000;
 const PUTER_MAX_RETRIES = 1; // Không retry, lỗi là fallback ngay
 const PUTER_RETRY_DELAY_MS = 2000; // Delay giữa các lần retry
 const ENABLE_ANSWER_SOLVING = process.env.AI_ENABLE_ANSWER_SOLVING !== "false";
@@ -77,6 +82,16 @@ function aiLog(level: "info" | "warn" | "error", stage: string, message: string,
     return;
   }
   console[level](prefix);
+}
+
+function hasTimeBudget(deadlineAt: number | undefined, minRemainingMs: number): boolean {
+  if (!deadlineAt) return true;
+  return deadlineAt - Date.now() > minRemainingMs;
+}
+
+function remainingBudgetMs(deadlineAt: number | undefined): number | null {
+  if (!deadlineAt) return null;
+  return Math.max(0, deadlineAt - Date.now());
 }
 
 export interface GeneratedQuestion {
@@ -858,9 +873,17 @@ function parseResolvedAnswers(raw: string, questionCount: number): Array<"A" | "
 async function resolveAnswersWithAi(
   questions: ExtractedQuestion[],
   sourceText: string,
-  preferredModel?: string
+  preferredModel?: string,
+  deadlineAt?: number
 ): Promise<ExtractedQuestion[]> {
   if (questions.length === 0) return questions;
+
+  if (!hasTimeBudget(deadlineAt, MIN_REMAINING_FOR_SOLVE_MS)) {
+    aiLog("warn", "SOLVE", "Skip solve due low remaining budget", {
+      remainingMs: remainingBudgetMs(deadlineAt),
+    });
+    return questions;
+  }
 
   aiLog("info", "SOLVE", "Solve strategy initialized", {
     totalQuestions: questions.length,
@@ -879,9 +902,16 @@ async function resolveAnswersWithAi(
     for (let start = 0; start < questions.length; start += SOLVE_BATCH_SIZE) {
       const end = Math.min(start + SOLVE_BATCH_SIZE, questions.length);
       const batch = questions.slice(start, end);
-      const solvedBatch = await resolveAnswersWithAi(batch, sourceText, preferredModel);
+      const solvedBatch = await resolveAnswersWithAi(batch, sourceText, preferredModel, deadlineAt);
       for (let i = 0; i < solvedBatch.length; i++) {
         merged[start + i] = solvedBatch[i];
+      }
+
+      if (!hasTimeBudget(deadlineAt, MIN_REMAINING_FOR_SOLVE_MS)) {
+        aiLog("warn", "SOLVE", "Stop additional solve batches due low remaining budget", {
+          remainingMs: remainingBudgetMs(deadlineAt),
+        });
+        break;
       }
     }
 
@@ -1014,7 +1044,7 @@ ${buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS)}`;
   }
 
   // 2) OpenRouter solve fallback.
-  if (openRouterKey) {
+  if (openRouterKey && hasTimeBudget(deadlineAt, MIN_REMAINING_FOR_SOLVE_MS)) {
     for (const model of modelsToTry) {
       aiLog("info", "OPENROUTER-SOLVE", "Trying model", { model });
       const res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
@@ -1059,10 +1089,20 @@ ${buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS)}`;
       }
     }
   } else {
-    aiLog("warn", "OPENROUTER-SOLVE", "OPENROUTER_API_KEY missing, skip OpenRouter solve");
+    aiLog("warn", "OPENROUTER-SOLVE", "Skip OpenRouter solve", {
+      missingKey: !openRouterKey,
+      remainingMs: remainingBudgetMs(deadlineAt),
+    });
   }
 
   // 3) Groq solve fallback.
+  if (!hasTimeBudget(deadlineAt, 6000)) {
+    aiLog("warn", "GROQ-SOLVE", "Skip Groq solve due low remaining budget", {
+      remainingMs: remainingBudgetMs(deadlineAt),
+    });
+    return questions;
+  }
+
   const groqKey = process.env.GROQ_API_KEY;
   if (!groqKey) {
     aiLog("warn", "GROQ-SOLVE", "GROQ_API_KEY missing, skip Groq solve");
@@ -1118,7 +1158,7 @@ ${buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS)}`;
   return questions;
 }
 
-async function generateQuestionsFromChunk(text: string, limit: number): Promise<ExtractedQuestion[]> {
+async function generateQuestionsFromChunk(text: string, limit: number, deadlineAt?: number): Promise<ExtractedQuestion[]> {
   aiLog("info", "PIPELINE", "Chunk extraction started", {
     mode: ENABLE_PUTER_FOR_EXTRACTION ? "hybrid+puter-enabled" : "lightweight-preferred",
     chunkChars: text.length,
@@ -1138,7 +1178,7 @@ async function generateQuestionsFromChunk(text: string, limit: number): Promise<
     });
 
     if (ENABLE_ANSWER_SOLVING) {
-      const solved = await resolveAnswersWithAi(heuristic, text, STEPFUN_TEXT_MODEL);
+      const solved = await resolveAnswersWithAi(heuristic, text, STEPFUN_TEXT_MODEL, deadlineAt);
       aiLog("info", "PIPELINE", "Chunk completed", { extracted: solved.length, solved: true, mode: "heuristic" });
       return solved.slice(0, limit);
     }
@@ -1180,6 +1220,14 @@ ${extractionSource}`;
     sourceCharsSent: extractionSource.length,
   });
 
+  if (!hasTimeBudget(deadlineAt, MIN_REMAINING_FOR_EXTRACTION_MS)) {
+    aiLog("warn", "PIPELINE", "Skip AI extraction due low remaining budget", {
+      heuristicSeed: heuristic.length,
+      remainingMs: remainingBudgetMs(deadlineAt),
+    });
+    return heuristic.slice(0, limit);
+  }
+
   aiLog("info", "PIPELINE", "Start extraction for chunk", { chunkChars: text.length, limit });
   const extracted = await callQuestionExtractionModel(extractionPrompt);
   const picked = extracted.slice(0, limit);
@@ -1204,7 +1252,7 @@ ${extractionSource}`;
     }
 
     const missing = expected.filter((idx) => !seen.has(idx));
-    if (missing.length > 0) {
+    if (missing.length > 0 && hasTimeBudget(deadlineAt, MIN_REMAINING_FOR_RECOVERY_MS)) {
       aiLog("warn", "PIPELINE", "Detected missing questions, running recovery", { missing: missing.join(",") });
       const recoveryPrompt = `Bạn đã bỏ sót một số câu. Chỉ trả về JSON cho các câu có source_index thuộc danh sách sau: ${missing.join(", ")}.
 Không trả lại các câu đã có. Giữ nguyên tiếng Việt và LaTeX.
@@ -1229,10 +1277,15 @@ ${buildContextSnippet(text, RECOVERY_SOURCE_CONTEXT_MAX_CHARS)}`;
         acc.push(q);
         return acc;
       }, []);
+    } else if (missing.length > 0) {
+      aiLog("warn", "PIPELINE", "Skip recovery due low remaining budget", {
+        missing: missing.join(","),
+        remainingMs: remainingBudgetMs(deadlineAt),
+      });
     }
   }
 
-  if (needsLatexRepair(merged)) {
+  if (needsLatexRepair(merged) && hasTimeBudget(deadlineAt, MIN_REMAINING_FOR_RECOVERY_MS)) {
     aiLog("info", "PIPELINE", "Detected broken LaTeX, running repair with Stepfun");
     const repairPrompt = `Sửa lỗi LaTeX cho các câu hỏi sau và giữ nguyên nghĩa tiếng Việt. Không bỏ sót câu nào, không thêm câu mới.
 Trả về JSON đúng schema cũ. Nếu có source_index thì giữ nguyên source_index.
@@ -1252,6 +1305,10 @@ ${buildContextSnippet(text, RECOVERY_SOURCE_CONTEXT_MAX_CHARS)}`;
         return acc;
       }, []);
     }
+  } else if (needsLatexRepair(merged)) {
+    aiLog("warn", "PIPELINE", "Skip LaTeX repair due low remaining budget", {
+      remainingMs: remainingBudgetMs(deadlineAt),
+    });
   }
 
   if (ENABLE_ANSWER_SOLVING) {
@@ -1267,7 +1324,7 @@ ${buildContextSnippet(text, RECOVERY_SOURCE_CONTEXT_MAX_CHARS)}`;
       totalQuestions: merged.length,
       source: "post-extraction",
     });
-    const solved = await resolveAnswersWithAi(merged, text, STEPFUN_TEXT_MODEL);
+    const solved = await resolveAnswersWithAi(merged, text, STEPFUN_TEXT_MODEL, deadlineAt);
     aiLog("info", "PIPELINE", "Chunk completed", { extracted: solved.length, solved: true });
     return solved.slice(0, limit);
   }
@@ -1277,6 +1334,12 @@ ${buildContextSnippet(text, RECOVERY_SOURCE_CONTEXT_MAX_CHARS)}`;
 }
 
 export async function buildQuestionsFromUploads(files: File[], manualText: string) {
+  const deadlineAt = Date.now() + REQUEST_TIME_BUDGET_MS;
+  aiLog("info", "PIPELINE", "Request budget initialized", {
+    isVercel: IS_VERCEL_RUNTIME,
+    budgetMs: REQUEST_TIME_BUDGET_MS,
+  });
+
   const texts: string[] = [];
   const sources: Array<{ name: string; chars: number; kind: "image" | "pdf" | "text" }> = [];
 
@@ -1325,8 +1388,15 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
       chunkLimit,
     });
 
-    const questions = await generateQuestionsFromChunk(chunk, chunkLimit);
+    const questions = await generateQuestionsFromChunk(chunk, chunkLimit, deadlineAt);
     all.push(...questions);
+
+    if (!hasTimeBudget(deadlineAt, MIN_REMAINING_FOR_EXTRACTION_MS)) {
+      aiLog("warn", "PIPELINE", "Stop processing additional chunks due low remaining budget", {
+        remainingMs: remainingBudgetMs(deadlineAt),
+      });
+      break;
+    }
   }
 
   const unique = all.reduce<ExtractedQuestion[]>((acc, q) => {
@@ -1352,7 +1422,7 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
     const seen = new Set<number>(unique.map((q) => q.source_index).filter((v): v is number => Number.isFinite(v)));
     const missing = expectedIndices.filter((idx) => !seen.has(idx));
 
-    if (missing.length > 0) {
+    if (missing.length > 0 && hasTimeBudget(deadlineAt, MIN_REMAINING_FOR_RECOVERY_MS)) {
       aiLog("warn", "PIPELINE", "Final global recovery for missing indices", { missing: missing.join(",") });
       const recoveryPrompt = `Bạn đang khôi phục các câu còn thiếu theo source_index từ toàn bộ văn bản.
 Chỉ trả về các câu có source_index thuộc danh sách: ${missing.join(", ")}.
@@ -1388,6 +1458,11 @@ ${cleanedText}`;
         }
         unique.push(q);
       }
+    } else if (missing.length > 0) {
+      aiLog("warn", "PIPELINE", "Skip final global recovery due low remaining budget", {
+        missing: missing.join(","),
+        remainingMs: remainingBudgetMs(deadlineAt),
+      });
     }
   }
 
