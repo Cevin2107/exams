@@ -5,7 +5,10 @@ import { buildQuestionsFromUploads } from "@/lib/aiGeneration";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-function classifyAiError(error: unknown): { status: number; publicMessage: string; code: string } {
+function classifyAiError(
+  error: unknown,
+  context?: { hasFiles: boolean; hasManualText: boolean }
+): { status: number; publicMessage: string; code: string } {
   const message = error instanceof Error ? error.message : "Unknown error";
 
   if (message.includes("Thiếu GROQ_API_KEY")) {
@@ -33,9 +36,12 @@ function classifyAiError(error: unknown): { status: number; publicMessage: strin
   }
 
   if (message.includes("AI did not return any questions")) {
+    const onlyManualText = Boolean(context?.hasManualText) && !Boolean(context?.hasFiles);
     return {
-      status: 502,
-      publicMessage: "AI chưa trích xuất được câu hỏi từ dữ liệu hiện tại. Hãy thử lại với ảnh/PDF rõ hơn.",
+      status: 422,
+      publicMessage: onlyManualText
+        ? "AI chưa trích xuất được câu hỏi từ văn bản đã dán. Hãy thử tách ngắn hơn hoặc chuẩn hóa định dạng câu hỏi (Câu 1, A/B/C/D)."
+        : "AI chưa trích xuất được câu hỏi từ dữ liệu hiện tại. Hãy thử lại với ảnh/PDF rõ hơn hoặc dán văn bản thô.",
       code: "AI_EMPTY_RESULT",
     };
   }
@@ -53,6 +59,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  let hasFiles = false;
+  let hasManualText = false;
+
   try {
     const formData = await req.formData();
     const files = formData
@@ -61,8 +70,10 @@ export async function POST(req: NextRequest) {
       .slice(0, 12); // guard against accidental huge batches
 
     const manualText = (formData.get("manualText") as string | null) || "";
+    hasManualText = Boolean(manualText.trim());
+    hasFiles = files.length > 0;
 
-    if (!files.length && !manualText.trim()) {
+    if (!hasFiles && !hasManualText) {
       return NextResponse.json({ error: "Vui lòng thêm ít nhất 1 ảnh/PDF hoặc dán văn bản." }, { status: 400 });
     }
 
@@ -80,7 +91,7 @@ export async function POST(req: NextRequest) {
     const message = error instanceof Error ? error.message : "Unknown error";
     const errorWithDetails = error as { details?: string };
     const details = errorWithDetails?.details || undefined;
-    const classified = classifyAiError(error);
+    const classified = classifyAiError(error, { hasFiles, hasManualText });
     return NextResponse.json(
       {
         error: isDev ? message : classified.publicMessage,

@@ -108,20 +108,40 @@ export function AiGeneratorModal({ assignmentId, isOpen, onClose, onSuccess }: A
       files.forEach((file) => formData.append("files", file));
       if (textInput.trim()) formData.append("manualText", textInput.trim());
 
+      const requestMeta = {
+        fileCount: files.length,
+        fileNames: files.map((f) => f.name),
+        hasManualText: Boolean(textInput.trim()),
+        manualTextLength: textInput.trim().length,
+      };
+      console.info("[AI][WEB] Request start", requestMeta);
+
       const res = await fetch("/api/admin/ai/generate", {
         method: "POST",
         body: formData,
       });
+
+      console.info("[AI][WEB] Response status", { status: res.status, ok: res.ok });
 
       if (!res.ok) {
         if (res.status === 504) {
           throw new Error("AI xử lý quá lâu và bị timeout. Hãy giảm số lượng file hoặc dán ít nội dung hơn rồi thử lại.");
         }
         const err = await res.json().catch(() => ({}));
+        console.warn("[AI][WEB] Response error payload", {
+          status: res.status,
+          error: err?.error,
+          code: err?.code,
+          details: err?.details,
+        });
         throw new Error(err.error || "Lỗi tạo câu hỏi");
       }
 
       const data = await res.json();
+      console.info("[AI][WEB] Response success payload", {
+        questionCount: data?.questions?.length || 0,
+        sourceCount: data?.sources?.length || 0,
+      });
       setProgress(100);
       setAiQuestions(data.questions || []);
       setSelectedIndices(new Set((data.questions || []).map((_: any, i: number) => i)));
