@@ -378,6 +378,29 @@ function normalizeLatexText(text: string): string {
     .replace(/\\\s+([a-zA-Z]+)/g, "\\\\$1");
 }
 
+function toHumanReadableMath(text: string): string {
+  if (!text) return text;
+
+  return normalizeLatexText(text)
+    .replace(/(^|[^\w\\])(\d{1,4})\s*\/\s*(\d{1,4})(?=$|[^\w])/g, (_m, pre, a, b) => `${pre}\\frac{${a}}{${b}}`)
+    .replace(/\\sqrt\s*\{([^{}]+)\}/gi, "√($1)")
+    .replace(/\\times|\\cdot/gi, "×")
+    .replace(/\\div/gi, "÷")
+    .replace(/\\pm/gi, "±")
+    .replace(/\\leq|\\le/gi, "≤")
+    .replace(/\\geq|\\ge/gi, "≥")
+    .replace(/\\neq/gi, "≠")
+    .replace(/\\approx/gi, "≈")
+    .replace(/\\infty/gi, "∞")
+    .replace(/\\pi/gi, "π")
+    .replace(/\\alpha/gi, "α")
+    .replace(/\\beta/gi, "β")
+    .replace(/\\gamma/gi, "γ")
+    .replace(/\*\*/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function splitBundledQuestionBlocks(text: string): string[] {
   const markers = [...text.matchAll(/(?:^|\s)(?:\*\*)?Câu\s*\d+\s*[\).:]/gim)].map((m) => m.index || 0);
   if (markers.length < 2) return [];
@@ -1613,7 +1636,16 @@ ${cleanedText}`;
     throw new Error("AI did not return any questions");
   }
 
-  const questions = unique.map(({ source_index: _sourceIndex, ...rest }) => rest);
+  const questions = unique.map(({ source_index: _sourceIndex, ...rest }) => ({
+    ...rest,
+    question: toHumanReadableMath(rest.question),
+    options: {
+      A: toHumanReadableMath(rest.options.A),
+      B: toHumanReadableMath(rest.options.B),
+      C: toHumanReadableMath(rest.options.C),
+      D: toHumanReadableMath(rest.options.D),
+    },
+  }));
 
   return {
     cleanedText,

@@ -6,6 +6,46 @@ interface MathTextProps {
   className?: string;
 }
 
+function humanizePlainLatex(text: string) {
+  if (!text) return text;
+
+  return text
+    // Repair common OCR/AI typo for fraction command.
+    .replace(/[/\\]\s*fraq/gi, "\\frac")
+    .replace(/\\{2,}/g, "\\")
+    // Convert common math commands to readable symbols.
+    .replace(/\\times|\\cdot/gi, "×")
+    .replace(/\\div/gi, "÷")
+    .replace(/\\pm/gi, "±")
+    .replace(/\\leq|\\le/gi, "≤")
+    .replace(/\\geq|\\ge/gi, "≥")
+    .replace(/\\neq/gi, "≠")
+    .replace(/\\approx/gi, "≈")
+    .replace(/\\infty/gi, "∞")
+    .replace(/\\pi/gi, "π")
+    .replace(/\\alpha/gi, "α")
+    .replace(/\\beta/gi, "β")
+    .replace(/\\gamma/gi, "γ")
+    // Square root: \sqrt{x} => √(x)
+    .replace(/\\sqrt\s*\{([^{}]+)\}/gi, "√($1)")
+    // Superscript/subscript compact forms.
+    .replace(/\^\{([^{}]+)\}/g, "^($1)")
+    .replace(/_\{([^{}]+)\}/g, "_($1)")
+    // Unescape braces used in plain text.
+    .replace(/\\\{/g, "{")
+    .replace(/\\\}/g, "}");
+}
+
+function normalizeFractionsForMathDetection(text: string) {
+  if (!text) return text;
+
+  return text
+    // Fix common typo first.
+    .replace(/[/\\]\s*fraq/gi, "\\frac")
+    // Convert simple numeric fractions into LaTeX fractions for stacked rendering.
+    .replace(/(^|[^\w\\])(\d{1,4})\s*\/\s*(\d{1,4})(?=$|[^\w])/g, (_m, pre, a, b) => `${pre}\\frac{${a}}{${b}}`);
+}
+
 function renderLatexSegment(content: string, displayMode: boolean) {
   try {
     return katex.renderToString(content, {
@@ -20,13 +60,15 @@ function renderLatexSegment(content: string, displayMode: boolean) {
 }
 
 function splitMathSegments(text: string) {
-  const normalized = text
+  const normalized = normalizeFractionsForMathDetection(
+    text
     .replace(/\\\[/g, "$$")
     .replace(/\\\]/g, "$$")
     .replace(/\\\(/g, "$")
-    .replace(/\\\)/g, "$");
+    .replace(/\\\)/g, "$")
+  );
 
-  const regex = /(\$\$[\s\S]+?\$\$|\$[^$\n]+\$)/g;
+  const regex = /(\$\$[\s\S]+?\$\$|\$[^$\n]+\$|\\frac\s*\{[^{}]+\}\s*\{[^{}]+\})/g;
   const parts: Array<{ type: "text" | "math"; value: string; displayMode?: boolean }> = [];
 
   let lastIndex = 0;
@@ -34,7 +76,7 @@ function splitMathSegments(text: string) {
 
   while ((match = regex.exec(normalized)) !== null) {
     if (match.index > lastIndex) {
-      parts.push({ type: "text", value: normalized.slice(lastIndex, match.index) });
+      parts.push({ type: "text", value: humanizePlainLatex(normalized.slice(lastIndex, match.index)) });
     }
 
     const token = match[0];
@@ -46,7 +88,7 @@ function splitMathSegments(text: string) {
   }
 
   if (lastIndex < normalized.length) {
-    parts.push({ type: "text", value: normalized.slice(lastIndex) });
+    parts.push({ type: "text", value: humanizePlainLatex(normalized.slice(lastIndex)) });
   }
 
   return parts;
