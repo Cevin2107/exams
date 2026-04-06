@@ -68,7 +68,7 @@ function splitMathSegments(text: string) {
     .replace(/\\\)/g, "$")
   );
 
-  const regex = /(\$\$[\s\S]+?\$\$|\$[^$\n]+\$|\\frac\s*\{[^{}]+\}\s*\{[^{}]+\})/g;
+  const regex = /(\$\$[\s\S]+?\$\$|\$[^$\n]+\$|\\(?:frac\s*\{[^{}]+\}\s*\{[^{}]+\}|sqrt\s*\{[^{}]+\}|[a-zA-Z]+)|[A-Za-z0-9]+(?:_\{[^{}]+\}|_[A-Za-z0-9]+|\^\{[^{}]+\}|\^[A-Za-z0-9]+){1,3})/g;
   const parts: Array<{ type: "text" | "math"; value: string; displayMode?: boolean }> = [];
 
   let lastIndex = 0;
@@ -80,9 +80,13 @@ function splitMathSegments(text: string) {
     }
 
     const token = match[0];
-    const isDisplay = token.startsWith("$$") && token.endsWith("$$");
-    const inner = isDisplay ? token.slice(2, -2) : token.slice(1, -1);
-    parts.push({ type: "math", value: inner.trim(), displayMode: isDisplay });
+    if (token.startsWith("$$") && token.endsWith("$$")) {
+      parts.push({ type: "math", value: token.slice(2, -2).trim(), displayMode: true });
+    } else if (token.startsWith("$") && token.endsWith("$")) {
+      parts.push({ type: "math", value: token.slice(1, -1).trim(), displayMode: false });
+    } else {
+      parts.push({ type: "math", value: token.trim(), displayMode: false });
+    }
 
     lastIndex = regex.lastIndex;
   }

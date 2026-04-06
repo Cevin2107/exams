@@ -173,7 +173,7 @@ export function AiGeneratorModal({ assignmentId, isOpen, onClose, onSuccess }: A
   };
 
   const handleSaveSelected = async () => {
-    if (selectedIndices.size === 0) return;
+    if (selectedIndices.size === 0 || saving) return;
     setSaving(true);
     try {
       const selected = aiQuestions.filter((_, i) => selectedIndices.has(i));
@@ -185,7 +185,17 @@ export function AiGeneratorModal({ assignmentId, isOpen, onClose, onSuccess }: A
 
       if (!res.ok) throw new Error("Không thể lưu câu hỏi");
 
-      setToast({ message: `Đã lưu ${selected.length} câu hỏi thành công!`, type: "success" });
+      const data = await res.json().catch(() => ({}));
+      const createdCount = typeof data?.count === "number" ? data.count : selected.length;
+      const skippedDuplicates = typeof data?.skippedDuplicates === "number" ? data.skippedDuplicates : 0;
+
+      setToast({
+        message:
+          skippedDuplicates > 0
+            ? `Đã lưu ${createdCount} câu hỏi, bỏ qua ${skippedDuplicates} câu bị trùng.`
+            : `Đã lưu ${createdCount} câu hỏi thành công!`,
+        type: "success",
+      });
       setTimeout(() => {
         onSuccess();
         onClose();

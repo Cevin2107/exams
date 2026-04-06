@@ -1,15 +1,15 @@
 import sharp from "sharp";
 
 const GROQ_TEXT_MODEL = "llama-3.1-8b-instant";
-const GROQ_SOLVE_MODEL = process.env.GROQ_SOLVE_MODEL || "qwen/qwen3-32b";
+const GROQ_SOLVE_MODEL = "qwen/qwen3-32b";
 const EXTRACT_GROQ_RETRIES = 2;
-const OPENROUTER_SOLVE_MODEL = process.env.MATH_SOLVER_MODEL || "google/gemma-3-27b-it:free";
+const OPENROUTER_SOLVE_MODEL = process.env.MATH_SOLVER_MODEL || "qwen/qwen-plus";
 const OPENROUTER_SOLVE_MODELS = (process.env.MATH_SOLVER_MODELS || `${OPENROUTER_SOLVE_MODEL}`)
   .split(",")
   .map((x) => x.trim())
   .filter((x) => Boolean(x) && x !== "stepfun/step-3.5-flash:free");
 const PUTER_OPENAI_BASE_URL = "https://api.puter.com/puterai/openai/v1/chat/completions";
-const QWEN_PRIMARY_MODEL = process.env.AI_QUESTION_QWEN_MODEL || "qwen/qwen3.6-plus-preview:free";
+const QWEN_PRIMARY_MODEL = process.env.AI_QUESTION_QWEN_MODEL || "qwen/qwen-plus:free";
 const PUTER_TEXT_MODEL = process.env.AI_QUESTION_PUTER_MODEL || QWEN_PRIMARY_MODEL;
 const PUTER_TEXT_MODELS = (() => {
   const configured = (process.env.AI_QUESTION_PUTER_MODELS || `${PUTER_TEXT_MODEL},arcee-ai/trinity-large-preview:free`)
@@ -109,6 +109,20 @@ interface OcrResult {
 
 interface ExtractedQuestion extends GeneratedQuestion {
   source_index?: number;
+}
+
+function normalizeForDedup(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function questionFingerprint(question: Pick<ExtractedQuestion, "question" | "options">): string {
+  return [
+    normalizeForDedup(question.question || ""),
+    normalizeForDedup(question.options.A || ""),
+    normalizeForDedup(question.options.B || ""),
+    normalizeForDedup(question.options.C || ""),
+    normalizeForDedup(question.options.D || ""),
+  ].join("||");
 }
 
 async function optimizeImage(file: File): Promise<Buffer> {
@@ -401,6 +415,31 @@ function toHumanReadableMath(text: string): string {
     .trim();
 }
 
+function ensureInlineMathDelimiters(text: string): string {
+  if (!text) return text;
+
+  const protectedSegments: string[] = [];
+  const placeholderPrefix = "@@MATH_SEGMENT_";
+  const withPlaceholders = text.replace(/\$\$[\s\S]+?\$\$|\$[^$\n]+\$/g, (segment) => {
+    const idx = protectedSegments.push(segment) - 1;
+    return `${placeholderPrefix}${idx}@@`;
+  });
+
+  const bareMathRegex =
+    /(^|[\s(\[{:;=,+\-])((?:\\(?:frac\s*\{[^{}]+\}\s*\{[^{}]+\}|sqrt\s*\{[^{}]+\}|sum|int|lim|sin|cos|tan|log|ln|pi|alpha|beta|gamma|theta)|[A-Za-z0-9]+(?:_\{[^{}]+\}|_[A-Za-z0-9]+|\^\{[^{}]+\}|\^[A-Za-z0-9]+){1,3}))(?=($|[\s)\]}:;,.!?]))/g;
+
+  const wrapped = withPlaceholders.replace(bareMathRegex, (_m, leading, expr) => `${leading}$${expr}$`);
+
+  return wrapped.replace(new RegExp(`${placeholderPrefix}(\\d+)@@`, "g"), (_m, idx) => {
+    const parsed = Number.parseInt(idx, 10);
+    return Number.isFinite(parsed) ? protectedSegments[parsed] || "" : "";
+  });
+}
+
+function formatMathForRender(text: string): string {
+  return ensureInlineMathDelimiters(toHumanReadableMath(text));
+}
+
 function splitBundledQuestionBlocks(text: string): string[] {
   const markers = [...text.matchAll(/(?:^|\s)(?:\*\*)?Câu\s*\d+\s*[\).:]/gim)].map((m) => m.index || 0);
   if (markers.length < 2) return [];
@@ -615,7 +654,7 @@ function normalizeQuestions(raw: unknown): ExtractedQuestion[] {
 
 function buildManualFallbackQuestion(sourceText: string): ExtractedQuestion {
   const normalized = compactWhitespace(sourceText);
-  const stem = normalizeLatexText(clampText(normalized, 420));
+  const stem = formatMathForRender(normalizeLatexText(clampText(normalized, 420)));
   return {
     question: stem || "Nội dung dán vào chưa đủ cấu trúc để tách câu hỏi tự động.",
     options: {
@@ -1041,19 +1080,20 @@ ${buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS)}`;
 
   aiLog("info", "SOLVE", "Start resolving answers", { questions: questions.length });
   const openRouterKey = process.env.OPENROUTER_API_KEY;
-  const modelsToTry = [preferredModel, ...OPENROUTER_SOLVE_MODELS].filter(
-    (m, idx, arr): m is string => Boolean(m) && arr.indexOf(m) === idx
-  );
 
   let openRouterFailure: HttpError | null = null;
   let puterFailure: HttpError | null = null;
 
-  // 1) Puter solve first.
+  // 1) Puter qwen-plus first.
   const puterToken = process.env.PUTER_AUTH_TOKEN;
+  const puterPrimaryModel = "qwen/qwen3-32b";
+  const puterFinalFallbackModel = "arcee-ai/trinity-large-preview:free";
+  const openRouterSolveModel = "qwen/qwen-plus";
+
   if (!puterToken) {
     aiLog("warn", "PUTER-SOLVE", "Skip Puter solve first: missing PUTER_AUTH_TOKEN (server-side Puter API requires auth)");
   } else {
-    for (const model of PUTER_TEXT_MODELS) {
+    for (const model of [puterPrimaryModel]) {
       aiLog("info", "PUTER-SOLVE", "Trying model", { model });
       for (let attempt = 1; attempt <= PUTER_MAX_RETRIES; attempt++) {
         try {
@@ -1131,46 +1171,87 @@ ${buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS)}`;
     }
   }
 
-  // 2) OpenRouter solve fallback.
+  // 2) OpenRouter qwen-plus with reasoning.
   if (openRouterKey && hasTimeBudget(deadlineAt, MIN_REMAINING_FOR_SOLVE_MS)) {
-    for (const model of modelsToTry) {
-      aiLog("info", "OPENROUTER-SOLVE", "Trying model", { model });
-      const res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${openRouterKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0,
-          max_tokens: 800,
-          messages: [
-            {
-              role: "system",
-              content: "Bạn là bộ giải câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ theo schema index/correct_answer.",
-            },
-            { role: "user", content: solvePrompt },
-          ],
-        }),
-      }, AI_TIMEOUT_MS);
+    aiLog("info", "OPENROUTER-SOLVE", "Trying model", { model: openRouterSolveModel });
 
-      if (!res.ok) {
-        const body = await res.text();
-        openRouterFailure = Object.assign(new Error(`OpenRouter ${model} solve error: ${res.status}`), {
-          status: res.status,
-          details: body,
-        }) as HttpError;
-        aiLog("warn", "OPENROUTER-SOLVE", "Model failed", { model, status: res.status });
-        continue;
-      }
+    const openRouterMessages = [
+      {
+        role: "system",
+        content: "Bạn là bộ giải câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ theo schema index/correct_answer.",
+      },
+      { role: "user", content: solvePrompt },
+    ];
 
+    const res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openRouterKey}`,
+      },
+      body: JSON.stringify({
+        model: openRouterSolveModel,
+        temperature: 0,
+        max_tokens: 800,
+        reasoning: { enabled: true },
+        messages: openRouterMessages,
+      }),
+    }, AI_TIMEOUT_MS);
+
+    if (!res.ok) {
+      const body = await res.text();
+      openRouterFailure = Object.assign(new Error(`OpenRouter ${openRouterSolveModel} solve error: ${res.status}`), {
+        status: res.status,
+        details: body,
+      }) as HttpError;
+      aiLog("warn", "OPENROUTER-SOLVE", "Model failed", { model: openRouterSolveModel, status: res.status });
+    } else {
       const data = await res.json();
-      const raw = extractAssistantText(data.choices?.[0]?.message?.content || "");
+      const firstMessage = data?.choices?.[0]?.message;
+      const raw = extractAssistantText(firstMessage?.content || "");
       const resolved = parseResolvedAnswers(raw, questions.length);
       if (resolved.some(Boolean)) {
-        aiLog("info", "OPENROUTER-SOLVE", "Model succeeded", { model });
+        aiLog("info", "OPENROUTER-SOLVE", "Model succeeded", { model: openRouterSolveModel, pass: 1 });
         return applySolveResults(questions, resolved);
+      }
+
+      const reasoningDetails = firstMessage?.reasoning_details;
+      if (reasoningDetails) {
+        const continuationMessages = [
+          ...openRouterMessages,
+          {
+            role: "assistant",
+            content: firstMessage?.content || "",
+            reasoning_details: reasoningDetails,
+          },
+          { role: "user", content: "Are you sure? Think carefully and return ONLY valid JSON." },
+        ];
+
+        const res2 = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${openRouterKey}`,
+          },
+          body: JSON.stringify({
+            model: openRouterSolveModel,
+            temperature: 0,
+            max_tokens: 800,
+            messages: continuationMessages,
+          }),
+        }, AI_TIMEOUT_MS);
+
+        if (res2.ok) {
+          const data2 = await res2.json();
+          const raw2 = extractAssistantText(data2?.choices?.[0]?.message?.content || "");
+          const resolved2 = parseResolvedAnswers(raw2, questions.length);
+          if (resolved2.some(Boolean)) {
+            aiLog("info", "OPENROUTER-SOLVE", "Model succeeded", { model: openRouterSolveModel, pass: 2 });
+            return applySolveResults(questions, resolved2);
+          }
+        } else {
+          aiLog("warn", "OPENROUTER-SOLVE", "Continuation failed", { model: openRouterSolveModel, status: res2.status });
+        }
       }
     }
   } else {
@@ -1180,7 +1261,7 @@ ${buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS)}`;
     });
   }
 
-  // 3) Groq solve fallback.
+  // 3) Groq qwen3-32b fallback.
   if (!hasTimeBudget(deadlineAt, 6000)) {
     aiLog("warn", "GROQ-SOLVE", "Skip Groq solve due low remaining budget", {
       remainingMs: remainingBudgetMs(deadlineAt),
@@ -1194,7 +1275,7 @@ ${buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS)}`;
     return markAllUnsolved(questions);
   }
 
-  const groqModels = [GROQ_SOLVE_MODEL, GROQ_TEXT_MODEL].filter((m, idx, arr) => Boolean(m) && arr.indexOf(m) === idx);
+  const groqModels = [GROQ_SOLVE_MODEL];
   for (const model of groqModels) {
     aiLog("info", "GROQ-SOLVE", "Trying Groq solve model", { model });
     const groqRes = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
@@ -1236,6 +1317,52 @@ ${buildContextSnippet(sourceText, SOLVE_SOURCE_CONTEXT_MAX_CHARS)}`;
         solved: groqResolved.filter(Boolean).length,
       });
       return applySolveResults(questions, groqResolved);
+    }
+  }
+
+  // 4) Final Puter fallback with arcee model.
+  if (puterToken && hasTimeBudget(deadlineAt, MIN_REMAINING_FOR_SOLVE_MS)) {
+    for (const model of [puterFinalFallbackModel]) {
+      aiLog("info", "PUTER-SOLVE-FALLBACK", "Trying model", { model });
+      try {
+        const res = await fetchWithTimeout(PUTER_OPENAI_BASE_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${puterToken}`,
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0,
+            max_tokens: 800,
+            messages: [
+              {
+                role: "system",
+                content: "Bạn là bộ giải câu hỏi trắc nghiệm. Chỉ trả về JSON hợp lệ theo schema index/correct_answer.",
+              },
+              { role: "user", content: solvePrompt },
+            ],
+          }),
+        }, PUTER_TIMEOUT_MS);
+
+        if (!res.ok) {
+          aiLog("warn", "PUTER-SOLVE-FALLBACK", "Model failed", { model, status: res.status });
+          continue;
+        }
+
+        const data = await res.json();
+        const raw = extractAssistantText(data?.choices?.[0]?.message?.content || "");
+        const resolved = parseResolvedAnswers(raw, questions.length);
+        if (resolved.some(Boolean)) {
+          aiLog("info", "PUTER-SOLVE-FALLBACK", "Model succeeded", { model });
+          return applySolveResults(questions, resolved);
+        }
+      } catch (error) {
+        aiLog("warn", "PUTER-SOLVE-FALLBACK", "Request error", {
+          model,
+          message: (error as Error).message,
+        });
+      }
     }
   }
 
@@ -1358,7 +1485,8 @@ ${extractionSource}`;
   let merged: ExtractedQuestion[] = [...heuristic];
   for (const q of picked) {
     if (q.source_index && merged.some((it) => it.source_index === q.source_index)) continue;
-    if (merged.some((it) => it.question === q.question)) continue;
+    const incomingFingerprint = questionFingerprint(q);
+    if (merged.some((it) => questionFingerprint(it) === incomingFingerprint)) continue;
     merged.push(q);
     if (merged.length >= limit) break;
   }
@@ -1398,7 +1526,8 @@ ${buildContextSnippet(text, RECOVERY_SOURCE_CONTEXT_MAX_CHARS)}`;
       }
       merged = [...merged, ...recovered].reduce<ExtractedQuestion[]>((acc, q) => {
         if (q.source_index && acc.some((it) => it.source_index === q.source_index)) return acc;
-        if (acc.some((it) => it.question === q.question)) return acc;
+        const incomingFingerprint = questionFingerprint(q);
+        if (acc.some((it) => questionFingerprint(it) === incomingFingerprint)) return acc;
         acc.push(q);
         return acc;
       }, []);
@@ -1432,7 +1561,8 @@ ${buildContextSnippet(text, RECOVERY_SOURCE_CONTEXT_MAX_CHARS)}`;
     if (repaired.length > 0) {
       merged = repaired.reduce<ExtractedQuestion[]>((acc, q) => {
         if (q.source_index && acc.some((it) => it.source_index === q.source_index)) return acc;
-        if (acc.some((it) => it.question === q.question)) return acc;
+        const incomingFingerprint = questionFingerprint(q);
+        if (acc.some((it) => questionFingerprint(it) === incomingFingerprint)) return acc;
         acc.push(q);
         return acc;
       }, []);
@@ -1552,18 +1682,8 @@ export async function buildQuestionsFromUploads(files: File[], manualText: strin
 
   const unique = all.reduce<ExtractedQuestion[]>((acc, q) => {
     if (q.source_index && acc.find((ex) => ex.source_index === q.source_index)) return acc;
-    if (
-      acc.find(
-        (ex) =>
-          ex.question === q.question &&
-          ex.options.A === q.options.A &&
-          ex.options.B === q.options.B &&
-          ex.options.C === q.options.C &&
-          ex.options.D === q.options.D
-      )
-    ) {
-      return acc;
-    }
+    const incomingFingerprint = questionFingerprint(q);
+    if (acc.find((ex) => questionFingerprint(ex) === incomingFingerprint)) return acc;
     acc.push(q);
     return acc;
   }, []);
@@ -1602,18 +1722,8 @@ ${cleanedText}`;
       }
       for (const q of recovered) {
         if (q.source_index && unique.some((it) => it.source_index === q.source_index)) continue;
-        if (
-          unique.some(
-            (it) =>
-              it.question === q.question &&
-              it.options.A === q.options.A &&
-              it.options.B === q.options.B &&
-              it.options.C === q.options.C &&
-              it.options.D === q.options.D
-          )
-        ) {
-          continue;
-        }
+        const incomingFingerprint = questionFingerprint(q);
+        if (unique.some((it) => questionFingerprint(it) === incomingFingerprint)) continue;
         unique.push(q);
       }
     } else if (missing.length > 0) {
@@ -1638,12 +1748,12 @@ ${cleanedText}`;
 
   const questions = unique.map(({ source_index: _sourceIndex, ...rest }) => ({
     ...rest,
-    question: toHumanReadableMath(rest.question),
+    question: formatMathForRender(rest.question),
     options: {
-      A: toHumanReadableMath(rest.options.A),
-      B: toHumanReadableMath(rest.options.B),
-      C: toHumanReadableMath(rest.options.C),
-      D: toHumanReadableMath(rest.options.D),
+      A: formatMathForRender(rest.options.A),
+      B: formatMathForRender(rest.options.B),
+      C: formatMathForRender(rest.options.C),
+      D: formatMathForRender(rest.options.D),
     },
   }));
 
