@@ -387,6 +387,9 @@ function normalizeLatexText(text: string): string {
     .replace(/\\\s*frac/gi, "\\\\frac")
     .replace(/\bfrac\s*([0-9])\s*([0-9]{1,2})\b/gi, "\\\\frac{$1}{$2}")
     .replace(/\\\s*sqrt/gi, "\\\\sqrt")
+    // Force unicode root forms back to LaTeX for consistent MathText rendering.
+    .replace(/(?:\\\s*)?√\s*\(([^()]+)\)/g, "\\\\sqrt{$1}")
+    .replace(/(?:\\\s*)?√\s*\{([^{}]+)\}/g, "\\\\sqrt{$1}")
     .replace(/\\\s*times/gi, "\\\\times")
     // Normalize escaped spacing like "\\ frac"
     .replace(/\\\s+([a-zA-Z]+)/g, "\\\\$1");
@@ -397,7 +400,6 @@ function toHumanReadableMath(text: string): string {
 
   return normalizeLatexText(text)
     .replace(/(^|[^\w\\])(\d{1,4})\s*\/\s*(\d{1,4})(?=$|[^\w])/g, (_m, pre, a, b) => `${pre}\\frac{${a}}{${b}}`)
-    .replace(/\\sqrt\s*\{([^{}]+)\}/gi, "√($1)")
     .replace(/\\times|\\cdot/gi, "×")
     .replace(/\\div/gi, "÷")
     .replace(/\\pm/gi, "±")

@@ -68,7 +68,7 @@ function splitMathSegments(text: string) {
     .replace(/\\\)/g, "$")
   );
 
-  const regex = /(\$\$[\s\S]+?\$\$|\$[^$\n]+\$|\\(?:frac\s*\{[^{}]+\}\s*\{[^{}]+\}|sqrt\s*\{[^{}]+\}|[a-zA-Z]+)|[A-Za-z0-9]+(?:_\{[^{}]+\}|_[A-Za-z0-9]+|\^\{[^{}]+\}|\^[A-Za-z0-9]+){1,3})/g;
+  const regex = /(\$\$[\s\S]+?\$\$|\$[\s\S]+?\$|\\(?:frac\s*\{[^{}]+\}\s*\{[^{}]+\}|sqrt\s*\{[^{}]+\}|[a-zA-Z]+)|[A-Za-z0-9]+(?:_\{[^{}]+\}|_[A-Za-z0-9]+|\^\{[^{}]+\}|\^[A-Za-z0-9]+){1,3})/g;
   const parts: Array<{ type: "text" | "math"; value: string; displayMode?: boolean }> = [];
 
   let lastIndex = 0;
@@ -116,7 +116,7 @@ export function MathText({ text, className }: MathTextProps) {
         return (
           <span
             key={index}
-            className={segment.displayMode ? "my-2 block overflow-x-auto" : "inline-block align-baseline"}
+            className={segment.displayMode ? "my-2 block overflow-x-auto" : "inline align-baseline"}
             dangerouslySetInnerHTML={{ __html: html }}
           />
         );
