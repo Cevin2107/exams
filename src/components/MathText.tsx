@@ -47,8 +47,12 @@ function normalizeFractionsForMathDetection(text: string) {
 }
 
 function renderLatexSegment(content: string, displayMode: boolean) {
+  const normalizedContent = content
+    // AI/OCR sometimes emits \\\frac or \\sqrt; KaTeX interprets leading \\ as a line break.
+    .replace(/\\{2,}(?=(?:frac|sqrt|sum|int|lim|sin|cos|tan|log|ln|pi|alpha|beta|gamma|theta)\b)/g, "\\");
+
   try {
-    return katex.renderToString(content, {
+    return katex.renderToString(normalizedContent, {
       throwOnError: false,
       displayMode,
       output: "html",
