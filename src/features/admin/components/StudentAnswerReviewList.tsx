@@ -65,11 +65,16 @@ export function StudentAnswerReviewList({
   onSetAnswerPoints,
   onSetSubQuestionAnswer,
 }: StudentAnswerReviewListProps) {
+  let currentActualOrder = 0;
+
   return (
     <div className="space-y-3">
       {questions && questions.length > 0 ? (
         questions.map((q) => {
           if (q.type === "section") return null;
+
+          currentActualOrder += 1;
+          const displayOrder = currentActualOrder;
 
           const hasAnswer = q.studentAnswer !== undefined && q.studentAnswer !== null && q.studentAnswer !== "";
           const regradeAnswer = regradeAnswers.get(q.questionId);
@@ -107,7 +112,7 @@ export function StudentAnswerReviewList({
                         : "bg-gradient-to-br from-slate-400 to-slate-500 shadow-slate-500/30"
                     }`}
                   >
-                    {q.order}
+                    {displayOrder}
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5">

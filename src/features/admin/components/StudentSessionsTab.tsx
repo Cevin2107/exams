@@ -334,14 +334,18 @@ export function StudentSessionsTab({ assignmentId }: { assignmentId: string }) {
                         )}
                       </div>
                       
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs text-slate-500">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs text-slate-500 mt-2">
                         <div className="flex items-center gap-1.5">
                           <Clock className="h-3 w-3 flex-shrink-0 text-blue-500" />
                           <span className="truncate">Bắt đầu: {formatVietnamTime(new Date(s.started_at))}</span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-purple-500" />
-                          <span className="truncate">Hoạt động: {formatVietnamTime(new Date(s.last_activity_at))}</span>
+                          <RefreshCw className="h-3 w-3 flex-shrink-0 text-emerald-500" />
+                          <span className="truncate">Cập nhật lúc: {formatVietnamTime(new Date(s.last_activity_at))}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <AlertCircle className="h-3 w-3 flex-shrink-0 text-rose-500" />
+                          <span className="truncate">Số lần thoát: <strong className="text-rose-600">{s.exit_count || 0}</strong> lần</span>
                         </div>
                       </div>
                       
