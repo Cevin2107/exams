@@ -169,6 +169,7 @@ export function StudentSessionsTab({ assignmentId }: { assignmentId: string }) {
                       ? Object.keys(detailData.draft_answers).length
                       : undefined
                   }
+                  exitCount={session.exit_count || 0}
                   onRefresh={async () => {
                     await Promise.all([refetchDetail(), refetch()]);
                   }}

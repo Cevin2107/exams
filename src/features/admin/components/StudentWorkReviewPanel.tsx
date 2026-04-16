@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { countActualQuestions } from "@/lib/utils";
 import { RegradeModal, RegradeInstruction } from "@/components/RegradeControls";
 import { StudentAnswerReviewList, type ReviewQuestion } from "./StudentAnswerReviewList";
-import { CheckCircle2, Edit3, RefreshCw, Target, Timer, TrendingUp, Zap } from "lucide-react";
+import { CheckCircle2, Edit3, RefreshCw, Target, Timer, TrendingUp, Zap, AlertCircle } from "lucide-react";
 
 interface StudentWorkReviewPanelProps {
   questions: ReviewQuestion[];
@@ -14,6 +14,7 @@ interface StudentWorkReviewPanelProps {
   submissionScore?: number;
   submissionDurationSeconds?: number;
   answeredCountOverride?: number;
+  exitCount?: number;
   onRefresh: () => Promise<void> | void;
   notify?: (message: string, type: "success" | "error") => void;
 }
@@ -34,6 +35,7 @@ export function StudentWorkReviewPanel({
   submissionScore,
   submissionDurationSeconds,
   answeredCountOverride,
+  exitCount,
   onRefresh,
   notify,
 }: StudentWorkReviewPanelProps) {
@@ -78,7 +80,6 @@ export function StudentWorkReviewPanel({
 
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
   })();
-  const progress = totalQuestions > 0 ? Math.round((answeredCount / totalQuestions) * 100) : 0;
 
   const startRegrading = () => {
     const initialAnswers = new Map<string, RegradeAnswerState>();
@@ -239,7 +240,7 @@ export function StudentWorkReviewPanel({
           </div>
         </div>
 
-        {isSubmitted && (
+        {isSubmitted ? (
           <div className="group relative overflow-hidden rounded-2xl bg-slate-50/95 backdrop-blur-sm border border-slate-200/80 shadow-md shadow-slate-200/40 p-3 hover:shadow-lg transition-all duration-300">
             <div className="absolute inset-0 bg-gradient-to-br from-emerald-50/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
             <div className="relative">
@@ -250,16 +251,29 @@ export function StudentWorkReviewPanel({
               <p className="text-xs text-slate-500 mt-0.5 font-medium">Điểm số</p>
             </div>
           </div>
+        ) : (
+          <div className="group relative overflow-hidden rounded-2xl bg-slate-50/95 backdrop-blur-sm border border-slate-200/80 shadow-md shadow-slate-200/40 p-3 hover:shadow-lg transition-all duration-300">
+            <div className="absolute inset-0 bg-gradient-to-br from-indigo-50/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div className="relative">
+              <div className="flex items-center justify-between mb-1.5">
+                <RefreshCw className="h-4 w-4 text-indigo-500" />
+              </div>
+              <p className="text-base font-bold text-indigo-700 drop-shadow-sm truncate mt-1">
+                {pausedAt ? new Date(pausedAt).toLocaleTimeString("vi-VN", { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : "Đang lấy..."}
+              </p>
+              <p className="text-[11px] text-slate-500 mt-0.5 font-medium">Cập nhật lúc</p>
+            </div>
+          </div>
         )}
 
         <div className="group relative overflow-hidden rounded-2xl bg-slate-50/95 backdrop-blur-sm border border-slate-200/80 shadow-md shadow-slate-200/40 p-3 hover:shadow-lg transition-all duration-300">
-          <div className="absolute inset-0 bg-gradient-to-br from-indigo-50/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+          <div className="absolute inset-0 bg-gradient-to-br from-rose-50/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           <div className="relative">
             <div className="flex items-center justify-between mb-1.5">
-              <CheckCircle2 className="h-4 w-4 text-indigo-500" />
+              <AlertCircle className="h-4 w-4 text-rose-500" />
             </div>
-            <p className="text-xl font-bold text-indigo-700 drop-shadow-sm">{progress}%</p>
-            <p className="text-[11px] text-slate-500 mt-0.5 font-medium">Tiến độ</p>
+            <p className="text-xl font-bold text-rose-700 drop-shadow-sm">{exitCount || 0}</p>
+            <p className="text-[11px] text-slate-500 mt-0.5 font-medium">Số lần thoát</p>
           </div>
         </div>
       </div>
