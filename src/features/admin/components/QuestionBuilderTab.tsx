@@ -176,7 +176,7 @@ export function QuestionBuilderTab({ assignmentId, initialQuestions }: { assignm
                   {q.type === 'section' && <Badge variant="default">Đoạn văn / Ghi chú</Badge>}
                   {q.type === 'essay' && <Badge variant="warning">Tự luận</Badge>}
                   {q.type === 'true_false' && <Badge variant="secondary" className="bg-blue-50 text-blue-700">Đúng/Sai</Badge>}
-                  {q.type === 'short_answer' && <Badge variant="secondary" className="bg-purple-50 text-purple-700">Điền từ</Badge>}
+                  {q.type === 'short_answer' && <Badge variant="secondary" className="bg-purple-50 text-purple-700">Trả lời ngắn</Badge>}
                   {q.points > 0 && <span className="text-sm font-semibold text-slate-500">{q.points} điểm</span>}
                 </div>
                 

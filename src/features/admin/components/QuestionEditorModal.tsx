@@ -223,7 +223,7 @@ export function QuestionEditorModal({ assignmentId, isOpen, onClose, onSuccess, 
                 <option value="mcq">Trắc nghiệm (MCQ)</option>
                 <option value="true_false">Đúng / Sai</option>
                 <option value="essay">Tự luận (Tải ảnh)</option>
-                <option value="short_answer">Điền từ / Trả lời ngắn</option>
+                <option value="short_answer">Trả lời ngắn / Điền từ</option>
                 <option value="section">Đoạn văn / Ghi chú</option>
               </select>
             </div>

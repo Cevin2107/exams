@@ -117,7 +117,7 @@ export function StudentAnswerReviewList({
                   <div>
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                        {q.type === "mcq" ? "Trắc nghiệm" : q.type === "true_false" ? "Đúng/Sai" : "Tự luận"}
+                        {q.type === "mcq" ? "Trắc nghiệm" : q.type === "true_false" ? "Đúng/Sai" : q.type === "short_answer" ? "Trả lời ngắn" : "Tự luận"}
                       </span>
                       <span className="text-xs text-slate-400">•</span>
                       <span className="text-sm font-bold text-slate-600">{q.points}đ</span>
@@ -442,7 +442,9 @@ export function StudentAnswerReviewList({
                   
                   {regradingMode && onSetAnswerPoints && (
                     <div className="p-3 bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200/50 rounded-lg">
-                      <p className="text-xs font-semibold text-amber-700 uppercase tracking-wider mb-2.5">Chấm lại câu tự luận</p>
+                      <p className="text-xs font-semibold text-amber-700 uppercase tracking-wider mb-2.5">
+                        Chấm lại điểm ({q.type === 'short_answer' ? 'Trả lời ngắn' : 'Tự luận'})
+                      </p>
                       <div className="flex items-center gap-2">
                         <input
                           type="number"
