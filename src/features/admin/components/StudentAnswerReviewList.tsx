@@ -275,8 +275,8 @@ export function StudentAnswerReviewList({
                   })()}
                   
                   {regradingMode && onSetAnswerPoints && (
-                    <div className="mt-4 p-3 bg-gradient-to-br from-violet-50 to-indigo-50 border border-violet-200/50 rounded-2xl">
-                      <p className="text-xs font-semibold text-violet-700 uppercase tracking-wider mb-2.5">Chấm lại câu trắc nghiệm</p>
+                    <div className="mt-4 p-3 bg-gradient-to-br from-violet-50 to-indigo-50 border border-violet-200/50 rounded-2xl flex flex-wrap items-center gap-3">
+                      <p className="text-xs font-semibold text-violet-700 uppercase tracking-wider w-full sm:w-auto">Chấm lại trắc nghiệm</p>
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => onSetAnswerPoints(q.questionId, q.points, q.points)}
@@ -298,6 +298,18 @@ export function StudentAnswerReviewList({
                         >
                           ✗ Sai (0đ)
                         </button>
+                      </div>
+                      <div className="flex items-center gap-2 flex-1 min-w-[120px]">
+                        <input
+                          type="number"
+                          min="0"
+                          max={q.points}
+                          step="0.1"
+                          value={regradeAnswer?.pointsAwarded ?? 0}
+                          onChange={(e) => onSetAnswerPoints(q.questionId, parseFloat(e.target.value) || 0, q.points)}
+                          className="w-full px-3 py-1.5 text-sm font-semibold border border-violet-300 rounded-lg bg-white text-violet-900 placeholder-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-500"
+                        />
+                        <span className="text-xs font-semibold text-violet-700 whitespace-nowrap">/ {q.points}đ</span>
                       </div>
                     </div>
                   )}
@@ -394,6 +406,24 @@ export function StudentAnswerReviewList({
                       </div>
                     );
                   })}
+                  
+                  {regradingMode && onSetAnswerPoints && (
+                    <div className="mt-3 p-3 bg-gradient-to-br from-cyan-50 to-blue-50 border border-cyan-200/50 rounded-lg flex flex-wrap items-center gap-3">
+                      <p className="text-xs font-semibold text-cyan-700 uppercase tracking-wider">Chỉnh nhanh điểm tổng</p>
+                      <div className="flex items-center gap-2 flex-1 min-w-[120px]">
+                        <input
+                          type="number"
+                          min="0"
+                          max={q.points}
+                          step="0.1"
+                          value={regradeAnswer?.pointsAwarded ?? 0}
+                          onChange={(e) => onSetAnswerPoints(q.questionId, parseFloat(e.target.value) || 0, q.points)}
+                          className="flex-1 px-3 py-1.5 text-sm font-semibold border border-cyan-300 rounded-lg bg-white text-cyan-900 placeholder-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                        />
+                        <span className="text-xs font-semibold text-cyan-700 whitespace-nowrap">/ {q.points}đ</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : q.type !== "mcq" && q.studentAnswer ? (
                 <div className="mt-3 space-y-2">
@@ -413,7 +443,7 @@ export function StudentAnswerReviewList({
                           type="number"
                           min="0"
                           max={q.points}
-                          step="0.5"
+                          step="0.1"
                           value={regradeAnswer?.pointsAwarded ?? 0}
                           onChange={(e) => onSetAnswerPoints(q.questionId, parseFloat(e.target.value) || 0, q.points)}
                           className="flex-1 px-3 py-1.5 text-sm font-semibold border border-amber-300 rounded-lg bg-white text-amber-900 placeholder-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
@@ -438,7 +468,7 @@ export function StudentAnswerReviewList({
                           type="number"
                           min="0"
                           max={q.points}
-                          step="0.5"
+                          step="0.1"
                           value={regradeAnswer?.pointsAwarded ?? 0}
                           onChange={(e) => onSetAnswerPoints(q.questionId, parseFloat(e.target.value) || 0, q.points)}
                           className="flex-1 px-3 py-1.5 text-sm font-semibold border border-amber-300 rounded-lg bg-white text-amber-900 placeholder-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500"

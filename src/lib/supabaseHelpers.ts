@@ -249,18 +249,15 @@ export async function createQuestion(question: {
 
   if (insertError) throw insertError;
 
-  // Only rebalance if not a section
-  if (currentCount > 0 && question.type !== "section") {
-    const { error: rebalanceError } = await supabase
-      .from("questions")
-      .update({ points: perQuestionPoints })
-      .eq("assignment_id", question.assignmentId)
-      .neq("type", "section"); // Don't rebalance sections
-
-    if (rebalanceError) throw rebalanceError;
+  // Only rebalance if not a section AND user didn't explicitly specify point for this new question
+  if (currentCount > 0 && question.type !== "section" && question.points === undefined) {
+    await rebalanceQuestionPoints(question.assignmentId);
   }
 
-  return { ...inserted, points: question.points !== undefined ? question.points : perQuestionPoints };
+  // Reload the inserted question after potential rebalance to return accurate point
+  const { data: finalQuestion } = await supabase.from("questions").select("*").eq("id", inserted.id).single();
+
+  return finalQuestion || inserted;
 }
 
 export async function updateAssignment(data: {
@@ -526,11 +523,6 @@ export async function updateQuestion(questionId: string, data: {
   }
 
   if (error) throw error;
-
-  if (question?.assignment_id) {
-    await rebalanceQuestionPoints(question.assignment_id);
-  }
-
   return question;
 }
 

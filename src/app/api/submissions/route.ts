@@ -102,13 +102,25 @@ export async function POST(req: Request) {
         pointsAwarded = isCorrect ? Number(q.points || 1) : 0;
       }
 
-      // Chấm điểm đúng/sai (mỗi ý đúng được điểm tỉ lệ)
+      // Chấm điểm đúng/sai (mỗi ý đúng được điểm tỉ lệ theo chuẩn mới hoặc chia đều)
       if (q.type === "true_false" && q.sub_questions) {
         const subQs = q.sub_questions as Array<{ id: string; answerKey: string; content: string; order: number }>;
         const studentTf = (() => { try { return JSON.parse(studentAnswer || "{}"); } catch { return {}; } })();
         const correctCount = subQs.filter((sq) => studentTf[sq.id] === sq.answerKey).length;
         const totalSubs = subQs.length;
-        pointsAwarded = totalSubs > 0 ? Math.round(((correctCount / totalSubs) * Number(q.points || 1)) * 1000) / 1000 : 0;
+        
+        let multiplier = 0;
+        if (totalSubs === 4) {
+          if (correctCount === 4) multiplier = 1.0;
+          else if (correctCount === 3) multiplier = 0.5;
+          else if (correctCount === 2) multiplier = 0.25;
+          else if (correctCount === 1) multiplier = 0.1;
+          else multiplier = 0;
+        } else {
+          multiplier = totalSubs > 0 ? correctCount / totalSubs : 0;
+        }
+
+        pointsAwarded = Math.round((multiplier * Number(q.points || 1)) * 1000) / 1000;
         isCorrect = correctCount === totalSubs && totalSubs > 0;
       }
 

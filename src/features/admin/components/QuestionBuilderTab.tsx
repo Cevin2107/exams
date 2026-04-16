@@ -172,7 +172,7 @@ export function QuestionBuilderTab({ assignmentId, initialQuestions }: { assignm
               
               <div className="flex-1 min-w-0 pr-4">
                 <div className="flex items-center gap-2 mb-2">
-                  {q.type !== 'section' && <Badge variant="secondary">Câu {q.order}</Badge>}
+                  {q.type !== 'section' && <Badge variant="secondary">Câu {questions.filter(x => x.type !== 'section').findIndex(x => x.id === q.id) + 1}</Badge>}
                   {q.type === 'section' && <Badge variant="default">Đoạn văn / Ghi chú</Badge>}
                   {q.type === 'essay' && <Badge variant="warning">Tự luận</Badge>}
                   {q.type === 'true_false' && <Badge variant="secondary" className="bg-blue-50 text-blue-700">Đúng/Sai</Badge>}

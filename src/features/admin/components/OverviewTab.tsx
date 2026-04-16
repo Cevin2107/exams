@@ -22,6 +22,7 @@ export function OverviewTab({ assignmentId, initialData }: { assignmentId: strin
     total_score: initialData?.total_score ?? initialData?.totalScore ?? 0,
     is_hidden: initialData?.is_hidden ?? initialData?.isHidden ?? false,
     hide_score: initialData?.hide_score ?? initialData?.hideScore ?? false,
+    point_ranges: initialData?.point_ranges ?? initialData?.pointRanges ?? [],
   }));
   const [loading, setLoading] = useState(false);
 
@@ -56,6 +57,7 @@ export function OverviewTab({ assignmentId, initialData }: { assignmentId: strin
         totalScore: editForm.total_score ? Number(editForm.total_score) : 10,
         isHidden: editForm.is_hidden, 
         hideScore: editForm.hide_score,
+        pointRanges: editForm.point_ranges.length > 0 ? editForm.point_ranges : null,
       };
 
       const res = await fetch(`/api/admin/assignments/${assignmentId}`, {
@@ -171,6 +173,72 @@ export function OverviewTab({ assignmentId, initialData }: { assignmentId: strin
                     <span className="text-sm text-slate-700">Ẩn điểm khi nộp bài</span>
                  </label>
               </div>
+
+               <div className="pt-4 border-t border-slate-100">
+                 <div className="flex items-center justify-between mb-4">
+                   <h3 className="text-sm font-bold text-slate-900">Chia điểm theo nhóm câu</h3>
+                   <Button type="button" variant="outline" size="sm" onClick={() => setEditForm(prev => ({ ...prev, point_ranges: [...prev.point_ranges, { fromQuestion: 1, toQuestion: 10, totalPoints: 5 }] }))}>
+                      Thêm nhóm
+                   </Button>
+                 </div>
+                 
+                 {editForm.point_ranges.length === 0 ? (
+                    <div className="text-sm text-slate-500 bg-slate-50 rounded-xl p-4 text-center">
+                      Mặc định tự chia đều tổng điểm cho từng câu. Thêm nhóm nếu muốn chia đặc biệt.
+                    </div>
+                 ) : (
+                    <div className="space-y-3">
+                      {editForm.point_ranges.map((range: any, idx: number) => (
+                        <div key={idx} className="flex flex-wrap items-center gap-2 bg-slate-50 rounded-lg p-2 border border-slate-100">
+                          <span className="text-xs text-slate-600 font-medium whitespace-nowrap">Từ câu</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={range.fromQuestion}
+                            onChange={(e) => setEditForm(prev => {
+                              const updated = [...prev.point_ranges];
+                              updated[idx] = { ...updated[idx], fromQuestion: parseInt(e.target.value) || 1 };
+                              return { ...prev, point_ranges: updated };
+                            })}
+                            className="w-14 rounded border border-slate-200 px-2 py-1 text-sm text-center focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                          />
+                          <span className="text-xs text-slate-600 font-medium whitespace-nowrap">đến</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={range.toQuestion}
+                            onChange={(e) => setEditForm(prev => {
+                              const updated = [...prev.point_ranges];
+                              updated[idx] = { ...updated[idx], toQuestion: parseInt(e.target.value) || 1 };
+                              return { ...prev, point_ranges: updated };
+                            })}
+                            className="w-14 rounded border border-slate-200 px-2 py-1 text-sm text-center focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                          />
+                          <span className="text-xs text-slate-600 font-medium whitespace-nowrap">tổng điểm</span>
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.5}
+                            value={range.totalPoints}
+                            onChange={(e) => setEditForm(prev => {
+                              const updated = [...prev.point_ranges];
+                              updated[idx] = { ...updated[idx], totalPoints: parseFloat(e.target.value) || 0 };
+                              return { ...prev, point_ranges: updated };
+                            })}
+                            className="w-16 rounded border border-slate-200 px-2 py-1 text-sm text-center focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setEditForm(prev => ({ ...prev, point_ranges: prev.point_ranges.filter((_: any, i: number) => i !== idx) }))}
+                            className="ml-auto text-red-500 hover:text-red-700 text-xs font-bold px-2 py-1 rounded hover:bg-red-50"
+                          >
+                            ✕ Lược bỏ
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                 )}
+               </div>
             </div>
 
             <div className="flex items-center justify-between pt-4 border-t border-slate-100">

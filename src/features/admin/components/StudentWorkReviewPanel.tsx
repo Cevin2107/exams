@@ -139,12 +139,23 @@ export function StudentWorkReviewPanel({
     
     current.subAnswers![subQuestionIndex.toString()] = isCorrect;
     
-    // Tính điểm theo số mệnh đề đúng trong câu đúng/sai
+    // Tính điểm theo đúng chuẩn (nếu có 4 câu thì áp dụng chuẩn phân rã, ngược lại chia đều)
     const subQuestionArray = Object.values(current.subAnswers);
     const correctCount = subQuestionArray.filter((v) => v === true).length;
     const numSubQuestions = Math.max(totalSubQuestions, 1);
-    const pointsPerSubQuestion = totalPoints / numSubQuestions;
-    current.pointsAwarded = Math.max(0, Math.min(totalPoints, correctCount * pointsPerSubQuestion));
+    
+    let multiplier = 0;
+    if (numSubQuestions === 4) {
+      if (correctCount === 4) multiplier = 1.0;
+      else if (correctCount === 3) multiplier = 0.5;
+      else if (correctCount === 2) multiplier = 0.25;
+      else if (correctCount === 1) multiplier = 0.1;
+      else multiplier = 0;
+    } else {
+      multiplier = correctCount / numSubQuestions;
+    }
+
+    current.pointsAwarded = Math.max(0, Math.min(totalPoints, multiplier * totalPoints));
     current.isCorrect = current.pointsAwarded > 0;
     
     newAnswers.set(questionId, current);
