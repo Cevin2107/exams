@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -25,6 +25,23 @@ export function OverviewTab({ assignmentId, initialData }: { assignmentId: strin
     point_ranges: initialData?.point_ranges ?? initialData?.pointRanges ?? [],
   }));
   const [loading, setLoading] = useState(false);
+
+  // Sync initialData changes into editForm
+  useEffect(() => {
+    if (initialData) {
+      setEditForm({
+        title: initialData.title || "",
+        subject: initialData.subject || "",
+        grade: initialData.grade || "",
+        due_at: initialData.due_at || initialData.dueAt || null,
+        duration_minutes: initialData.duration_minutes ?? initialData.durationMinutes ?? null,
+        total_score: initialData.total_score ?? initialData.totalScore ?? 0,
+        is_hidden: initialData.is_hidden ?? initialData.isHidden ?? false,
+        hide_score: initialData.hide_score ?? initialData.hideScore ?? false,
+        point_ranges: initialData.point_ranges ?? initialData.pointRanges ?? [],
+      });
+    }
+  }, [initialData]);
 
   const { data: analytics, isLoading: analyticsLoading } = useQuery({
     queryKey: ["admin-analytics", assignmentId],
@@ -88,11 +105,11 @@ export function OverviewTab({ assignmentId, initialData }: { assignmentId: strin
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-8">
       {/* Settings Form */}
       <div className="lg:col-span-2 space-y-6">
         <form onSubmit={handleSave}>
-          <Card className="p-6 space-y-6">
+          <Card className="p-4 sm:p-6 space-y-5 sm:space-y-6">
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <h2 className="text-lg font-bold text-slate-900">Thông tin cơ bản</h2>
               <div className="flex gap-2">
@@ -133,7 +150,7 @@ export function OverviewTab({ assignmentId, initialData }: { assignmentId: strin
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                 <div>
                   <label className="text-sm font-semibold text-slate-700">Hạn nộp</label>
                   <input
@@ -163,7 +180,7 @@ export function OverviewTab({ assignmentId, initialData }: { assignmentId: strin
                 </div>
               </div>
 
-              <div className="flex items-center gap-6 pt-4">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 pt-4">
                  <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={Boolean(editForm.is_hidden)} onChange={e => setEditForm({ ...editForm, is_hidden: e.target.checked })} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
                     <span className="text-sm text-slate-700">Ẩn bài tập (Học sinh không thấy)</span>
@@ -194,10 +211,10 @@ export function OverviewTab({ assignmentId, initialData }: { assignmentId: strin
                           <input
                             type="number"
                             min={1}
-                            value={range.fromQuestion}
+                            value={range.fromQuestion || ""}
                             onChange={(e) => setEditForm(prev => {
                               const updated = [...prev.point_ranges];
-                              updated[idx] = { ...updated[idx], fromQuestion: parseInt(e.target.value) || 1 };
+                              updated[idx] = { ...updated[idx], fromQuestion: e.target.value === "" ? "" : parseInt(e.target.value) };
                               return { ...prev, point_ranges: updated };
                             })}
                             className="w-14 rounded border border-slate-200 px-2 py-1 text-sm text-center focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
@@ -206,10 +223,10 @@ export function OverviewTab({ assignmentId, initialData }: { assignmentId: strin
                           <input
                             type="number"
                             min={1}
-                            value={range.toQuestion}
+                            value={range.toQuestion || ""}
                             onChange={(e) => setEditForm(prev => {
                               const updated = [...prev.point_ranges];
-                              updated[idx] = { ...updated[idx], toQuestion: parseInt(e.target.value) || 1 };
+                              updated[idx] = { ...updated[idx], toQuestion: e.target.value === "" ? "" : parseInt(e.target.value) };
                               return { ...prev, point_ranges: updated };
                             })}
                             className="w-14 rounded border border-slate-200 px-2 py-1 text-sm text-center focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
@@ -219,10 +236,10 @@ export function OverviewTab({ assignmentId, initialData }: { assignmentId: strin
                             type="number"
                             min={0}
                             step={0.5}
-                            value={range.totalPoints}
+                            value={range.totalPoints === "" ? "" : range.totalPoints}
                             onChange={(e) => setEditForm(prev => {
                               const updated = [...prev.point_ranges];
-                              updated[idx] = { ...updated[idx], totalPoints: parseFloat(e.target.value) || 0 };
+                              updated[idx] = { ...updated[idx], totalPoints: e.target.value === "" ? "" : parseFloat(e.target.value) };
                               return { ...prev, point_ranges: updated };
                             })}
                             className="w-16 rounded border border-slate-200 px-2 py-1 text-sm text-center focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"

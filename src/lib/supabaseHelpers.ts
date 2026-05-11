@@ -471,6 +471,61 @@ export async function deleteQuestion(questionId: string) {
   }
 }
 
+export async function bulkDeleteQuestions(questionIds: string[], assignmentId: string) {
+  const supabase = getSupabaseAdmin();
+
+  const { data: questions, error: fetchError } = await supabase
+    .from("questions")
+    .select("id, image_url")
+    .in("id", questionIds)
+    .eq("assignment_id", assignmentId);
+
+  if (fetchError) throw fetchError;
+  if (!questions || questions.length === 0) return;
+
+  // 1. Delete images
+  const imagePaths = questions
+    .map(q => q.image_url)
+    .filter(Boolean)
+    .map(url => {
+      const match = url!.match(/question-images\/(.+)$/);
+      return match ? match[1] : null;
+    })
+    .filter(Boolean) as string[];
+
+  if (imagePaths.length > 0) {
+    await supabase.storage.from('question-images').remove(imagePaths);
+  }
+
+  // 2. Delete questions
+  const idsToDelete = questions.map(q => q.id);
+  const { error: deleteError } = await supabase
+    .from("questions")
+    .delete()
+    .in("id", idsToDelete);
+
+  if (deleteError) throw deleteError;
+
+  // 3. Reorder remaining
+  const { data: remaining, error: remainingError } = await supabase
+    .from("questions")
+    .select("id")
+    .eq("assignment_id", assignmentId)
+    .order("order", { ascending: true });
+
+  if (remainingError) throw remainingError;
+
+  if (remaining && remaining.length > 0) {
+    for (let idx = 0; idx < remaining.length; idx++) {
+      await supabase
+        .from("questions")
+        .update({ order: idx + 1 })
+        .eq("id", remaining[idx].id);
+    }
+    await rebalanceQuestionPoints(assignmentId);
+  }
+}
+
 export async function updateQuestion(questionId: string, data: {
   type?: "mcq" | "essay" | "section" | "short_answer" | "true_false";
   content?: string;
@@ -580,7 +635,7 @@ export async function fetchSubmissionsForExport(assignmentId: string) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("submissions")
-    .select("id, student_code, score, submitted_at, duration_seconds, status")
+    .select("id, student_name, student_code, score, submitted_at, duration_seconds, status")
     .eq("assignment_id", assignmentId)
     .order("submitted_at", { ascending: false });
 

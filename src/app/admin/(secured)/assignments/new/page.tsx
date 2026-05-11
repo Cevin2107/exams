@@ -96,7 +96,7 @@ export default function NewAssignmentPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-8 py-8 space-y-6 animate-fade-in">
+    <div className="mx-auto max-w-4xl px-3 sm:px-8 py-4 sm:py-8 space-y-4 sm:space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
           <Link href="/admin/dashboard">
@@ -105,13 +105,13 @@ export default function NewAssignmentPage() {
                Quay lại
             </Button>
           </Link>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Tạo bài tập mới</h1>
-          <p className="text-sm text-slate-500 mt-1">Cấu hình thông tin cơ bản cho bài tập trước khi biên soạn câu hỏi.</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Tạo bài tập mới</h1>
+          <p className="text-xs sm:text-sm text-slate-500 mt-1 hidden sm:block">Cấu hình thông tin cơ bản cho bài tập trước khi biên soạn câu hỏi.</p>
         </div>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <Card className="p-6">
+        <Card className="p-4 sm:p-6">
            {errorObj && (
             <div className="mb-6 rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-700 ring-1 ring-red-200 flex items-center gap-2">
                <EyeOff className="h-4 w-4" />
@@ -196,7 +196,7 @@ export default function NewAssignmentPage() {
               </div>
             </div>
 
-            <div className="grid gap-6 md:grid-cols-3">
+            <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-3">
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                    <Clock className="h-4 w-4 text-slate-500" />
@@ -280,10 +280,10 @@ export default function NewAssignmentPage() {
                         <input
                           type="number"
                           min={1}
-                          value={range.fromQuestion}
+                          value={range.fromQuestion || ""}
                           onChange={(e) => setPointRanges(p => {
                             const updated = [...p];
-                            updated[idx] = { ...updated[idx], fromQuestion: parseInt(e.target.value) || 1 };
+                            updated[idx] = { ...updated[idx], fromQuestion: e.target.value === "" ? "" : parseInt(e.target.value) } as any;
                             return updated;
                           })}
                           className="w-14 rounded border border-slate-200 px-2 py-1 text-sm text-center"
@@ -292,10 +292,10 @@ export default function NewAssignmentPage() {
                         <input
                           type="number"
                           min={1}
-                          value={range.toQuestion}
+                          value={range.toQuestion || ""}
                           onChange={(e) => setPointRanges(p => {
                             const updated = [...p];
-                            updated[idx] = { ...updated[idx], toQuestion: parseInt(e.target.value) || 1 };
+                            updated[idx] = { ...updated[idx], toQuestion: e.target.value === "" ? "" : parseInt(e.target.value) } as any;
                             return updated;
                           })}
                           className="w-14 rounded border border-slate-200 px-2 py-1 text-sm text-center"
@@ -305,10 +305,10 @@ export default function NewAssignmentPage() {
                           type="number"
                           min={0}
                           step={0.5}
-                          value={range.totalPoints}
+                          value={range.totalPoints === "" ? "" : range.totalPoints}
                           onChange={(e) => setPointRanges(p => {
                             const updated = [...p];
-                            updated[idx] = { ...updated[idx], totalPoints: parseFloat(e.target.value) || 0 };
+                            updated[idx] = { ...updated[idx], totalPoints: e.target.value === "" ? "" : parseFloat(e.target.value) } as any;
                             return updated;
                           })}
                           className="w-16 rounded border border-slate-200 px-2 py-1 text-sm text-center"

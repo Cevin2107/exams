@@ -15,12 +15,13 @@ export async function GET(
     const { id } = await params;
     const rows = await fetchSubmissionsForExport(id);
 
-    const header = ["submission_id", "student_code", "score", "submitted_at", "duration_seconds", "status"];
+    const header = ["submission_id", "student_name", "student_code", "score", "submitted_at", "duration_seconds", "status"];
     const lines = [header.join(",")];
 
     rows.forEach((r) => {
       const line = [
         r.id,
+        r.student_name ?? "",
         r.student_code ?? "",
         r.score ?? "",
         r.submitted_at,
@@ -33,7 +34,7 @@ export async function GET(
       lines.push(line);
     });
 
-    const csv = lines.join("\n");
+    const csv = "\uFEFF" + lines.join("\n");
 
     return new NextResponse(csv, {
       status: 200,

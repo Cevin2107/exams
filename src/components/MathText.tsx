@@ -10,10 +10,44 @@ function humanizePlainLatex(text: string) {
   if (!text) return text;
 
   return text
-    // Repair common OCR/AI typo for fraction command.
+    // 1. Fix slash/backslash-prefixed LaTeX commands (Gemini & DeepSeek hay output sai)
     .replace(/[/\\]\s*fraq/gi, "\\frac")
+    .replace(/[/\\]\s*frac/gi, "\\frac")
+    .replace(/[/\\]\s*sqrt/gi, "\\sqrt")
+    .replace(/[/\\]\s*cdot/gi, "\\cdot")
+    .replace(/[/\\]\s*times/gi, "\\times")
+    .replace(/[/\\]\s*div(?=\s|$)/gi, "\\div")
+    .replace(/[/\\]\s*pm(?=\s|$)/gi, "\\pm")
+    .replace(/[/\\]\s*leq(?=\s|$)/gi, "\\leq")
+    .replace(/[/\\]\s*geq(?=\s|$)/gi, "\\geq")
+    .replace(/[/\\]\s*neq(?=\s|$)/gi, "\\neq")
+    .replace(/[/\\]\s*infty(?=\s|$)/gi, "\\infty")
+    .replace(/[/\\]\s*pi(?=\s|$|[^a-z])/gi, "\\pi")
+    .replace(/[/\\]\s*alpha(?=\s|$)/gi, "\\alpha")
+    .replace(/[/\\]\s*beta(?=\s|$)/gi, "\\beta")
+    .replace(/[/\\]\s*gamma(?=\s|$)/gi, "\\gamma")
+    .replace(/[/\\]\s*theta(?=\s|$)/gi, "\\theta")
+    .replace(/[/\\]\s*sin(?=\s|\()/gi, "\\sin")
+    .replace(/[/\\]\s*cos(?=\s|\()/gi, "\\cos")
+    .replace(/[/\\]\s*tan(?=\s|\()/gi, "\\tan")
+    .replace(/[/\\]\s*log(?=\s|\()/gi, "\\log")
+    .replace(/[/\\]\s*ln(?=\s|\()/gi, "\\ln")
+    .replace(/[/\\]\s*left\s*([([{|])/gi, "\\left$1")
+    .replace(/[/\\]\s*right\s*([)\]|}])/gi, "\\right$1")
+
+    // 2. Bare frac without backslash
+    .replace(/\bfrac\s*\{([^{}]+)\}\s*\{([^{}]+)\}/gi, "\\frac{$1}{$2}")
+    .replace(/\bfrac\s*([0-9])\s*([0-9]{1,2})\b/gi, "\\frac{$1}{$2}")
+
+    // 3. Unicode square root
+    .replace(/\u221a\s*\(([^()]+)\)/g, "\\sqrt{$1}")
+    .replace(/\u221a\s*\{([^{}]+)\}/g, "\\sqrt{$1}")
+    .replace(/\u221a\s*(\d+)/g, "\\sqrt{$1}")
+
+    // 4. Collapse excess backslashes (e.g. \\\frac → \frac)
     .replace(/\\{2,}/g, "\\")
-    // Convert common math commands to readable symbols.
+
+    // 5. Convert common math commands to readable symbols (only for text segments)
     .replace(/\\times|\\cdot/gi, "×")
     .replace(/\\div/gi, "÷")
     .replace(/\\pm/gi, "±")
@@ -40,8 +74,14 @@ function normalizeFractionsForMathDetection(text: string) {
   if (!text) return text;
 
   return text
-    // Fix common typo first.
+    // Fix all slash/backslash-prefixed LaTeX commands
     .replace(/[/\\]\s*fraq/gi, "\\frac")
+    .replace(/[/\\]\s*frac/gi, "\\frac")
+    .replace(/[/\\]\s*sqrt/gi, "\\sqrt")
+    .replace(/[/\\]\s*left\s*([([{|])/gi, "\\left$1")
+    .replace(/[/\\]\s*right\s*([)\]|}])/gi, "\\right$1")
+    // Collapse excess backslashes
+    .replace(/\\{2,}(?=[a-zA-Z])/g, "\\")
     // Convert simple numeric fractions into LaTeX fractions for stacked rendering.
     .replace(/(^|[^\w\\])(\d{1,4})\s*\/\s*(\d{1,4})(?=$|[^\w])/g, (_m, pre, a, b) => `${pre}\\frac{${a}}{${b}}`);
 }

@@ -18,10 +18,10 @@ export default function AdminDashboardPage() {
   return (
     <div className="container-custom py-6 md:py-8 space-y-6 animate-fade-in">
       {/* Header with Glassmorphic Card */}
-      <div className="rounded-3xl bg-white/70 backdrop-blur-xl border border-white/80 shadow-xl shadow-slate-200/50 p-6 md:p-8">
+      <div className="rounded-2xl sm:rounded-3xl bg-white/70 backdrop-blur-xl border border-white/80 shadow-xl shadow-slate-200/50 p-4 sm:p-6 md:p-8">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">Tổng quan hệ thống</h1>
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">Tổng quan hệ thống</h1>
             <p className="text-sm text-slate-600 mt-1.5">Quản lý bài tập và theo dõi số liệu chung.</p>
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
@@ -48,7 +48,7 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* Stat cards - Enhanced Glassmorphic */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 md:gap-6">
         {isLoading ? (
           <>
             <CardSkeleton />
@@ -57,28 +57,28 @@ export default function AdminDashboardPage() {
           </>
         ) : (
           <>
-            <div className="group rounded-3xl bg-white/70 backdrop-blur-xl border border-white/80 shadow-xl shadow-slate-200/50 p-6 hover:shadow-2xl hover:shadow-indigo-200/40 transition-all duration-300">
-              <div className="relative inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-purple-600 text-white mb-4 shadow-xl shadow-indigo-500/40 group-hover:scale-110 transition-transform duration-300">
-                <LayoutList className="h-7 w-7" />
+            <div className="group rounded-2xl sm:rounded-3xl bg-white/70 backdrop-blur-xl border border-white/80 shadow-xl shadow-slate-200/50 p-4 sm:p-6 hover:shadow-2xl hover:shadow-indigo-200/40 transition-all duration-300">
+              <div className="relative inline-flex h-10 w-10 sm:h-14 sm:w-14 items-center justify-center rounded-xl sm:rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-purple-600 text-white mb-3 sm:mb-4 shadow-xl shadow-indigo-500/40 group-hover:scale-110 transition-transform duration-300">
+                <LayoutList className="h-5 w-5 sm:h-7 sm:w-7" />
               </div>
-              <p className="text-4xl font-bold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">{assignments.length}</p>
-              <p className="text-sm font-semibold text-slate-500 mt-2">Tổng bài tập</p>
+              <p className="text-2xl sm:text-4xl font-bold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">{assignments.length}</p>
+              <p className="text-xs sm:text-sm font-semibold text-slate-500 mt-1 sm:mt-2">Tổng bài tập</p>
             </div>
             
-            <div className="group rounded-3xl bg-white/70 backdrop-blur-xl border border-white/80 shadow-xl shadow-slate-200/50 p-6 hover:shadow-2xl hover:shadow-emerald-200/40 transition-all duration-300">
-              <div className="relative inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-500 text-white mb-4 shadow-xl shadow-emerald-500/40 group-hover:scale-110 transition-transform duration-300">
-                <Eye className="h-7 w-7" />
+            <div className="group rounded-2xl sm:rounded-3xl bg-white/70 backdrop-blur-xl border border-white/80 shadow-xl shadow-slate-200/50 p-4 sm:p-6 hover:shadow-2xl hover:shadow-emerald-200/40 transition-all duration-300">
+              <div className="relative inline-flex h-10 w-10 sm:h-14 sm:w-14 items-center justify-center rounded-xl sm:rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-500 text-white mb-3 sm:mb-4 shadow-xl shadow-emerald-500/40 group-hover:scale-110 transition-transform duration-300">
+                <Eye className="h-5 w-5 sm:h-7 sm:w-7" />
               </div>
-              <p className="text-4xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">{visibleCount}</p>
-              <p className="text-sm font-semibold text-slate-500 mt-2">Đang công khai</p>
+              <p className="text-2xl sm:text-4xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">{visibleCount}</p>
+              <p className="text-xs sm:text-sm font-semibold text-slate-500 mt-1 sm:mt-2">Đang công khai</p>
             </div>
             
-            <div className="group rounded-3xl bg-white/70 backdrop-blur-xl border border-white/80 shadow-xl shadow-slate-200/50 p-6 hover:shadow-2xl hover:shadow-slate-200/40 transition-all duration-300">
-              <div className="relative inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-400 to-slate-500 text-white mb-4 shadow-xl shadow-slate-400/30 group-hover:scale-110 transition-transform duration-300">
-                <EyeOff className="h-7 w-7" />
+            <div className="group rounded-2xl sm:rounded-3xl bg-white/70 backdrop-blur-xl border border-white/80 shadow-xl shadow-slate-200/50 p-4 sm:p-6 hover:shadow-2xl hover:shadow-slate-200/40 transition-all duration-300 col-span-2 sm:col-span-1">
+              <div className="relative inline-flex h-10 w-10 sm:h-14 sm:w-14 items-center justify-center rounded-xl sm:rounded-2xl bg-gradient-to-br from-slate-400 to-slate-500 text-white mb-3 sm:mb-4 shadow-xl shadow-slate-400/30 group-hover:scale-110 transition-transform duration-300">
+                <EyeOff className="h-5 w-5 sm:h-7 sm:w-7" />
               </div>
-              <p className="text-4xl font-bold text-slate-700">{hiddenCount}</p>
-              <p className="text-sm font-semibold text-slate-500 mt-2">Đang ẩn</p>
+              <p className="text-2xl sm:text-4xl font-bold text-slate-700">{hiddenCount}</p>
+              <p className="text-xs sm:text-sm font-semibold text-slate-500 mt-1 sm:mt-2">Đang ẩn</p>
             </div>
           </>
         )}
@@ -98,7 +98,7 @@ export default function AdminDashboardPage() {
             </Link>
           </div>
 
-          <div className="rounded-3xl bg-white/70 backdrop-blur-xl border border-white/80 shadow-xl shadow-slate-200/50 overflow-hidden">
+          <div className="rounded-2xl sm:rounded-3xl bg-white/70 backdrop-blur-xl border border-white/80 shadow-xl shadow-slate-200/50 overflow-hidden">
             {isLoading ? (
               <div className="p-8 text-center text-slate-400 text-sm">Đang tải dữ liệu...</div>
             ) : assignments.length === 0 ? (
@@ -117,7 +117,7 @@ export default function AdminDashboardPage() {
             ) : (
               <div className="divide-y divide-slate-100/50">
                 {assignments.map((a: any) => (
-                  <div key={a.id} className="flex items-center justify-between px-6 py-5 transition hover:bg-slate-50/50 hover:backdrop-blur-sm">
+                  <div key={a.id} className="flex items-center justify-between px-4 sm:px-6 py-4 sm:py-5 transition hover:bg-slate-50/50 hover:backdrop-blur-sm">
                     <div className="min-w-0 flex-1 pr-4">
                       <div className="flex items-center gap-2 mb-1.5">
                         <h3 className="text-[15px] font-semibold text-slate-900 truncate">{a.title}</h3>

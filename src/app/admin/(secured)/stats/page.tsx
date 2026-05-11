@@ -123,7 +123,7 @@ export default function AdminStatsPage() {
   useEffect(() => {
     const interval = setInterval(() => {
       loadStats(true);
-    }, 3000);
+    }, 15000);
 
     return () => clearInterval(interval);
   }, [loadStats]);

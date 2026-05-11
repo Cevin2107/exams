@@ -27,11 +27,12 @@ export default function AssignmentsPage() {
   });
 
   // Sort assignments
-  const sorted = [...filtered].sort((a, b) => {
+  const sorted = [...filtered].sort((a: any, b: any) => {
     if (sortBy === "title") return a.title.localeCompare(b.title);
     if (sortBy === "date") {
-      const dateA = a.due_at ? new Date(a.due_at).getTime() : 0;
-      const dateB = b.due_at ? new Date(b.due_at).getTime() : 0;
+      // Prioritize created_at if available, fallback to due_at
+      const dateA = a.created_at ? new Date(a.created_at).getTime() : (a.due_at ? new Date(a.due_at).getTime() : 0);
+      const dateB = b.created_at ? new Date(b.created_at).getTime() : (b.due_at ? new Date(b.due_at).getTime() : 0);
       return dateB - dateA;
     }
     if (sortBy === "score") return (b.total_score || 0) - (a.total_score || 0);
@@ -98,7 +99,7 @@ export default function AssignmentsPage() {
               </select>
             </div>
 
-            <div className="hidden sm:flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
               <svg className="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 4h13M3 8h9m-9 4h9m5-4v12m0 0l-4-4m4 4l4-4" />
               </svg>
@@ -109,7 +110,7 @@ export default function AssignmentsPage() {
                 aria-label="Sắp xếp theo"
               >
                 <option value="title">Tên A-Z</option>
-                <option value="date">Hạn nộp</option>
+                <option value="date">Ngày tạo mới nhất</option>
                 <option value="score">Điểm cao nhất</option>
               </select>
             </div>
@@ -134,7 +135,7 @@ export default function AssignmentsPage() {
 
       {/* Assignment Grid */}
       {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
           <CardSkeleton />
           <CardSkeleton />
           <CardSkeleton />
@@ -143,7 +144,7 @@ export default function AssignmentsPage() {
           <CardSkeleton />
         </div>
       ) : sorted.length === 0 ? (
-        <Card className="p-16">
+        <Card className="p-8 sm:p-16">
           <div className="flex flex-col items-center justify-center text-center">
             <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-50 ring-1 ring-slate-100">
               <LayoutList className="h-8 w-8 text-slate-300" />
@@ -165,9 +166,9 @@ export default function AssignmentsPage() {
           </div>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
           {sorted.map((a: any) => (
-            <Card key={a.id} variant="elevated" className="flex flex-col p-5 hover-lift">
+            <Card key={a.id} variant="elevated" className="flex flex-col p-4 sm:p-5 hover-lift">
               {/* Header */}
               <div className="flex items-start justify-between gap-2 mb-3">
                 <div className="flex items-center gap-2 flex-wrap">

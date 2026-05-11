@@ -36,3 +36,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Failed to create question" }, { status: 500 });
   }
 }
+
+export async function DELETE(req: NextRequest) {
+  const isAuth = await checkAdminAuth();
+  if (!isAuth) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const body = await req.json();
+    const { questionIds } = body;
+    
+    if (!Array.isArray(questionIds) || questionIds.length === 0) {
+      return NextResponse.json({ error: "Missing or invalid questionIds array" }, { status: 400 });
+    }
+
+    const { bulkDeleteQuestions } = require("@/lib/supabaseHelpers");
+    await bulkDeleteQuestions(questionIds, assignmentId);
+    
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Error bulk deleting questions:", error);
+    return NextResponse.json({ error: "Failed to bulk delete questions" }, { status: 500 });
+  }
+}

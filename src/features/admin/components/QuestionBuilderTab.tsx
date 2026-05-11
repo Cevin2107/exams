@@ -17,6 +17,9 @@ export function QuestionBuilderTab({ assignmentId, initialQuestions }: { assignm
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [autoScrollInterval, setAutoScrollInterval] = useState<NodeJS.Timeout | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [isDeletingBulk, setIsDeletingBulk] = useState(false);
 
   // Auto reload questions after AI generation or changes
   const refreshQuestions = useCallback(async () => {
@@ -124,27 +127,89 @@ export function QuestionBuilderTab({ assignmentId, initialQuestions }: { assignm
     }
   };
 
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Xóa ${selectedIds.size} câu hỏi đã chọn?`)) return;
+    
+    setIsDeletingBulk(true);
+    try {
+      const res = await fetch(`/api/admin/questions`, { 
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assignmentId,
+          questionIds: Array.from(selectedIds)
+        })
+      });
+      if (!res.ok) throw new Error("Xóa thất bại");
+      setToast({ message: `Đã xóa ${selectedIds.size} câu hỏi`, type: "success" });
+      setSelectedIds(new Set());
+      setIsSelectionMode(false);
+      refreshQuestions();
+    } catch (e) {
+      setToast({ message: "Lỗi khi xóa hàng loạt", type: "error" });
+    } finally {
+      setIsDeletingBulk(false);
+    }
+  };
+
+  const toggleSelection = (id: string) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === questions.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(questions.map(q => q.id)));
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">Bộ câu hỏi</h2>
-          <p className="text-sm text-slate-500 mt-1">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <h2 className="text-lg sm:text-xl font-bold text-slate-900">Bộ câu hỏi</h2>
+          <p className="text-xs sm:text-sm text-slate-500 mt-1">
             Sắp xếp, chỉnh sửa và tạo câu hỏi cho bài tập này. 
             {questions.length > 0 && (
-              <span className="font-semibold text-slate-700">
+              <span className="font-semibold text-slate-700 block sm:inline">
                 {" "}({countActualQuestions(questions)} câu hỏi, {questions.length - countActualQuestions(questions)} ghi chú)
               </span>
             )}
           </p>
         </div>
-        <div className="flex gap-3">
-          <Button variant="outline" onClick={() => { setEditingQuestion(null); setShowEditorModal(true); }}>
-             <Plus className="h-4 w-4 mr-2" /> Thêm thủ công
-          </Button>
-          <Button variant="brand" onClick={() => setShowAiModal(true)}>
-             <Settings2 className="h-4 w-4 mr-2" /> Tạo bằng AI
-          </Button>
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          {isSelectionMode ? (
+            <>
+              <Button variant="outline" size="sm" onClick={() => { setIsSelectionMode(false); setSelectedIds(new Set()); }}>
+                 Hủy
+              </Button>
+              <Button variant="outline" size="sm" onClick={toggleSelectAll}>
+                 {selectedIds.size === questions.length ? "Bỏ chọn hết" : "Chọn hết"}
+              </Button>
+              <Button variant="destructive" size="sm" onClick={handleBulkDelete} disabled={selectedIds.size === 0 || isDeletingBulk}>
+                 <Trash2 className="h-4 w-4 mr-1.5" /> Xóa ({selectedIds.size})
+              </Button>
+            </>
+          ) : (
+            <>
+              {questions.length > 0 && (
+                <Button variant="outline" size="sm" onClick={() => setIsSelectionMode(true)}>
+                   Chọn nhiều
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={() => { setEditingQuestion(null); setShowEditorModal(true); }}>
+                 <Plus className="h-4 w-4 mr-1.5" /> Thủ công
+              </Button>
+              <Button variant="brand" size="sm" onClick={() => setShowAiModal(true)}>
+                 <Settings2 className="h-4 w-4 mr-1.5" /> Tạo bằng AI
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -159,16 +224,23 @@ export function QuestionBuilderTab({ assignmentId, initialQuestions }: { assignm
           questions.map((q) => (
             <Card 
               key={q.id} 
-              className={`flex items-start p-4 transition-all border-l-4 ${q.type === 'section' ? 'border-l-indigo-500 bg-indigo-50' : 'border-l-transparent bg-white'} hover:shadow-md cursor-move`}
-              draggable
-              onDragStart={() => setDraggedId(q.id)}
+              className={`flex items-start p-4 transition-all border-l-4 ${q.type === 'section' ? 'border-l-indigo-500 bg-indigo-50' : 'border-l-transparent bg-white'} hover:shadow-md ${isSelectionMode ? 'cursor-pointer' : 'cursor-move'} ${selectedIds.has(q.id) ? 'ring-2 ring-indigo-500' : ''}`}
+              draggable={!isSelectionMode}
+              onDragStart={(e) => { if(!isSelectionMode) setDraggedId(q.id); else e.preventDefault(); }}
               onDragOver={handleDragOver}
               onDragEnd={handleDragEnd}
               onDrop={() => handleDrop(q.id)}
+              onClick={() => isSelectionMode && toggleSelection(q.id)}
             >
-              <div className="mr-4 mt-1 cursor-grab text-slate-300 hover:text-slate-500">
-                 <GripVertical className="h-5 w-5" />
-              </div>
+              {isSelectionMode ? (
+                <div className="mr-4 mt-1">
+                  <input type="checkbox" checked={selectedIds.has(q.id)} onChange={() => {}} className="h-5 w-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer pointer-events-none" />
+                </div>
+              ) : (
+                <div className="mr-4 mt-1 cursor-grab text-slate-300 hover:text-slate-500">
+                   <GripVertical className="h-5 w-5" />
+                </div>
+              )}
               
               <div className="flex-1 min-w-0 pr-4">
                 <div className="flex items-center gap-2 mb-2">
@@ -180,7 +252,7 @@ export function QuestionBuilderTab({ assignmentId, initialQuestions }: { assignm
                   {q.points > 0 && <span className="text-sm font-semibold text-slate-500">{q.points} điểm</span>}
                 </div>
                 
-                <p className="text-base font-semibold text-slate-900 leading-relaxed max-w-3xl"><MathText text={q.content || ""} /></p>
+                <div className="text-base font-semibold text-slate-900 leading-relaxed max-w-full break-words overflow-hidden"><MathText text={q.content || ""} /></div>
 
                 {(q.imageUrl || q.image_url) && <img src={q.imageUrl || q.image_url} alt="img" className="mt-3 max-w-xs rounded-xl border border-slate-200" />}
 
@@ -191,7 +263,7 @@ export function QuestionBuilderTab({ assignmentId, initialQuestions }: { assignm
                       return (
                         <div key={i} className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${isCorrect ? 'bg-emerald-50 text-emerald-700 font-semibold ring-1 ring-emerald-200' : 'bg-slate-50 text-slate-600'}`}>
                            <span>{String.fromCharCode(65 + i)}.</span>
-                           <span><MathText text={c || ""} /></span>
+                           <span className="flex-1 break-words"><MathText text={c || ""} /></span>
                            {isCorrect && <CheckCircle2 className="h-4 w-4 ml-auto text-emerald-500" />}
                         </div>
                       );
@@ -217,12 +289,16 @@ export function QuestionBuilderTab({ assignmentId, initialQuestions }: { assignm
               </div>
               
               <div className="flex flex-col gap-2 shrink-0">
-                 <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50" onClick={() => { setEditingQuestion(q); setShowEditorModal(true); }}>
-                    <Edit2 className="h-4 w-4" />
-                 </Button>
-                 <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50" onClick={() => handleDelete(q.id)}>
-                    <Trash2 className="h-4 w-4" />
-                 </Button>
+                 {!isSelectionMode && (
+                   <>
+                     <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50" onClick={(e) => { e.stopPropagation(); setEditingQuestion(q); setShowEditorModal(true); }}>
+                        <Edit2 className="h-4 w-4" />
+                     </Button>
+                     <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50" onClick={(e) => { e.stopPropagation(); handleDelete(q.id); }}>
+                        <Trash2 className="h-4 w-4" />
+                     </Button>
+                   </>
+                 )}
               </div>
             </Card>
           ))

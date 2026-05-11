@@ -379,21 +379,50 @@ function normalizeLatexText(text: string): string {
   if (!text) return text;
 
   return text
+    // Remove markdown bold markers
     .replace(/\*\*/g, "")
-    // Common corruption patterns from model outputs
-    .replace(/\/\s*fraq/gi, "\\\\frac")
-    .replace(/\/\s*frac/gi, "\\\\frac")
-    .replace(/\\\s*fraq/gi, "\\\\frac")
-    .replace(/\\\s*frac/gi, "\\\\frac")
-    .replace(/\bfrac\s*([0-9])\s*([0-9]{1,2})\b/gi, "\\\\frac{$1}{$2}")
-    .replace(/\\\s*sqrt/gi, "\\\\sqrt")
-    // Force unicode root forms back to LaTeX for consistent MathText rendering.
-    .replace(/(?:\\\s*)?√\s*\(([^()]+)\)/g, "\\\\sqrt{$1}")
-    .replace(/(?:\\\s*)?√\s*\{([^{}]+)\}/g, "\\\\sqrt{$1}")
-    .replace(/\\\s*times/gi, "\\\\times")
-    // Normalize escaped spacing like "\\ frac"
-    .replace(/\\\s+([a-zA-Z]+)/g, "\\\\$1");
+    // ── Fix slash-prefixed LaTeX commands (/frac, /sqrt, etc. from DeepSeek/Gemini) ──
+    .replace(/[/\\]\s*fraq\s*\{/gi, "\\frac{")
+    .replace(/[/\\]\s*frac\s*\{/gi, "\\frac{")
+    .replace(/[/\\]\s*fraq(?=\s|$)/gi, "\\frac")
+    .replace(/[/\\]\s*frac(?=\s|$)/gi, "\\frac")
+    .replace(/[/\\]\s*sqrt/gi, "\\sqrt")
+    .replace(/[/\\]\s*left\s*([([{|])/gi, "\\left$1")
+    .replace(/[/\\]\s*right\s*([)\]|}])/gi, "\\right$1")
+    .replace(/[/\\]\s*cdot(?=\s|$)/gi, "\\cdot")
+    .replace(/[/\\]\s*times(?=\s|$)/gi, "\\times")
+    .replace(/[/\\]\s*div(?=\s|$)/gi, "\\div")
+    .replace(/[/\\]\s*pm(?=\s|$)/gi, "\\pm")
+    .replace(/[/\\]\s*leq(?=\s|$)/gi, "\\leq")
+    .replace(/[/\\]\s*geq(?=\s|$)/gi, "\\geq")
+    .replace(/[/\\]\s*neq(?=\s|$)/gi, "\\neq")
+    .replace(/[/\\]\s*infty(?=\s|$)/gi, "\\infty")
+    .replace(/[/\\]\s*pi(?=\s|$|[^a-z])/gi, "\\pi")
+    .replace(/[/\\]\s*alpha(?=\s|$)/gi, "\\alpha")
+    .replace(/[/\\]\s*beta(?=\s|$)/gi, "\\beta")
+    .replace(/[/\\]\s*gamma(?=\s|$)/gi, "\\gamma")
+    .replace(/[/\\]\s*theta(?=\s|$)/gi, "\\theta")
+    .replace(/[/\\]\s*sin(?=\s|\()/gi, "\\sin")
+    .replace(/[/\\]\s*cos(?=\s|\()/gi, "\\cos")
+    .replace(/[/\\]\s*tan(?=\s|\()/gi, "\\tan")
+    .replace(/[/\\]\s*log(?=\s|\()/gi, "\\log")
+    .replace(/[/\\]\s*ln(?=\s|\()/gi, "\\ln")
+    .replace(/[/\\]\s*sum(?=\s|_|\^)/gi, "\\sum")
+    .replace(/[/\\]\s*int(?=\s|_|\^)/gi, "\\int")
+    .replace(/[/\\]\s*lim(?=\s|_)/gi, "\\lim")
+    // ── Bare frac without backslash ──
+    .replace(/\bfrac\s*\{([^{}]+)\}\s*\{([^{}]+)\}/gi, "\\frac{$1}{$2}")
+    .replace(/\bfrac\s*([0-9])\s*([0-9]{1,2})\b/gi, "\\frac{$1}{$2}")
+    // ── Unicode square root ──
+    .replace(/(?:\\?\s*)?√\s*\(([^()]+)\)/g, "\\sqrt{$1}")
+    .replace(/(?:\\?\s*)?√\s*\{([^{}]+)\}/g, "\\sqrt{$1}")
+    .replace(/(?:\\?\s*)?√\s*(\d+)/g, "\\sqrt{$1}")
+    // ── Collapse excess backslashes (\\frac → \frac) ──
+    .replace(/\\{2,}(?=[a-zA-Z])/g, "\\")
+    // ── Normalize backslash-space before LaTeX command (e.g. "\ frac" → "\frac") ──
+    .replace(/\\\s+([a-zA-Z]+)/g, "\\$1");
 }
+
 
 function toHumanReadableMath(text: string): string {
   if (!text) return text;

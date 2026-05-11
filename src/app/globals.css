@@ -130,6 +130,10 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.6; }
   }
+  @keyframes slide-in-right {
+    from { transform: translateX(100%); opacity: 0; }
+    to   { transform: translateX(0);    opacity: 1; }
+  }
 
   .animate-slide-up  { animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1); }
   .animate-fade-in   { animation: fade-in  0.3s ease-out; }
@@ -137,6 +141,16 @@
   .animate-pulse-ring { animation: pulse-ring 1.5s ease-out infinite; }
   .animate-gradient  { animation: gradient 3s ease infinite; }
   .animate-pulse-slow { animation: pulse-slow 4s ease-in-out infinite; }
+  .animate-slide-in-right { animation: slide-in-right 0.25s cubic-bezier(0.16, 1, 0.3, 1); }
+
+  /* Hide scrollbar but allow scrolling */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
 
   /* Skeleton shimmer */
   .skeleton {

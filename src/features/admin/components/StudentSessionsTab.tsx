@@ -17,7 +17,8 @@ import {
   Timer,
   Zap,
   FileCheck,
-  LogOut
+  LogOut,
+  Download
 } from "lucide-react";
 
 export function StudentSessionsTab({ assignmentId }: { assignmentId: string }) {
@@ -75,10 +76,25 @@ export function StudentSessionsTab({ assignmentId }: { assignmentId: string }) {
     }
   };
 
-  // Filter sessions by search term
-  const filteredSessions = sessions.filter((s: any) => 
-    s.student_name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Filter and sort sessions
+  const filteredSessions = sessions
+    .filter((s: any) => s.student_name.toLowerCase().includes(searchTerm.toLowerCase()))
+    .sort((a: any, b: any) => {
+      // Priority 1: Active sessions (not submitted and not exited)
+      const aActive = !a.submissions?.id && a.status !== "exited";
+      const bActive = !b.submissions?.id && b.status !== "exited";
+      if (aActive && !bActive) return -1;
+      if (!aActive && bActive) return 1;
+
+      // Priority 2: Exited sessions (not submitted but exited)
+      const aExited = !a.submissions?.id && a.status === "exited";
+      const bExited = !b.submissions?.id && b.status === "exited";
+      if (aExited && !bExited) return -1;
+      if (!aExited && bExited) return 1;
+
+      // Priority 3: Sort by started_at desc
+      return new Date(b.started_at).getTime() - new Date(a.started_at).getTime();
+    });
 
   if (selectedSessionId) {
     const session = sessions.find((s: any) => s.id === selectedSessionId);
@@ -194,10 +210,10 @@ export function StudentSessionsTab({ assignmentId }: { assignmentId: string }) {
   return (
     <div className="space-y-4 animate-fade-in">
       {/* Header Section - Glassmorphism */}
-      <div className="relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-xl border border-white/80 shadow-lg shadow-slate-200/50 p-4">
+      <div className="relative overflow-hidden rounded-xl sm:rounded-2xl bg-white/70 backdrop-blur-xl border border-white/80 shadow-lg shadow-slate-200/50 p-3 sm:p-4">
         <div className="absolute inset-0 bg-gradient-to-br from-indigo-50/50 via-transparent to-violet-50/50 pointer-events-none" />
         
-        <div className="relative flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+        <div className="relative flex flex-col gap-3">
           <div className="flex-1">
             <div className="flex items-center gap-2.5 mb-1.5">
               <h2 className="text-xl font-bold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
@@ -216,23 +232,32 @@ export function StudentSessionsTab({ assignmentId }: { assignmentId: string }) {
                 <div className="absolute inset-0 bg-indigo-500/20 rounded-full blur animate-pulse" />
                 <RefreshCw className="relative h-3.5 w-3.5 animate-spin" />
               </div>
-              <span className="font-medium">Tự động đồng bộ mỗi 3 giây</span>
+              <span className="font-medium">Tự động đồng bộ mỗi 2 giây</span>
             </div>
           </div>
-          
-          {sessions.length > 0 && (
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-              <input
-                type="text"
-                placeholder="Tìm kiếm học sinh..."
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-3 py-2 bg-white/60 backdrop-blur-sm border border-white/60 rounded-xl text-xs font-medium text-slate-700 placeholder-slate-400 shadow-md shadow-slate-200/50 focus:bg-white focus:ring-4 focus:ring-indigo-100 focus:border-indigo-300 transition-all outline-none"
-                aria-label="Tìm kiếm học sinh"
-              />
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="flex flex-1 max-w-md items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Tìm kiếm học sinh..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-3 py-2 bg-white/60 backdrop-blur-sm border border-white/60 rounded-xl text-xs font-medium text-slate-700 placeholder-slate-400 shadow-md shadow-slate-200/50 focus:bg-white focus:ring-4 focus:ring-indigo-100 focus:border-indigo-300 transition-all outline-none"
+                  aria-label="Tìm kiếm học sinh"
+                />
+              </div>
+              <button
+                onClick={() => window.open(`/api/admin/assignments/${assignmentId}/export`, '_blank')}
+                className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-700 font-semibold rounded-xl border border-emerald-200 transition-colors flex-shrink-0 text-xs shadow-sm"
+              >
+                <Download className="h-4 w-4" />
+                <span className="hidden sm:inline">Xuất bảng điểm</span>
+              </button>
             </div>
-          )}
+          </div>
         </div>
       </div>
 
@@ -278,7 +303,7 @@ export function StudentSessionsTab({ assignmentId }: { assignmentId: string }) {
           {filteredSessions.map((s: any) => (
             <div 
               key={s.id} 
-              className="group relative overflow-hidden rounded-2xl bg-white/70 backdrop-blur-xl border border-white/80 shadow-lg shadow-slate-200/50 hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300 p-4"
+              className="group relative overflow-hidden rounded-xl sm:rounded-2xl bg-white/70 backdrop-blur-xl border border-white/80 shadow-lg shadow-slate-200/50 hover:shadow-xl transition-all duration-300 p-3 sm:p-4"
             >
               {/* Top gradient indicator */}
               <div className={`absolute top-0 left-0 right-0 h-1 ${
@@ -289,7 +314,7 @@ export function StudentSessionsTab({ assignmentId }: { assignmentId: string }) {
                   : 'bg-gradient-to-r from-amber-500 to-orange-500'
               }`} />
               
-              <div className="relative flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
                 {/* Student Info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start gap-3 mb-3">
@@ -335,7 +360,7 @@ export function StudentSessionsTab({ assignmentId }: { assignmentId: string }) {
                         )}
                       </div>
                       
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs text-slate-500 mt-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 sm:gap-2 text-xs text-slate-500 mt-2">
                         <div className="flex items-center gap-1.5">
                           <Clock className="h-3 w-3 flex-shrink-0 text-blue-500" />
                           <span className="truncate">Bắt đầu: {formatVietnamTime(new Date(s.started_at))}</span>
