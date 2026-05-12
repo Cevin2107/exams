@@ -1,7 +1,5 @@
 "use client";
 
-import { ThemeToggle } from "@/components/ThemeToggle";
-
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
@@ -150,9 +148,7 @@ export function AdminSidebar() {
 
               {/* Drawer Footer */}
               <div className="border-t border-slate-100 p-3 space-y-2">
-                <div className="flex justify-center">
-                  <ThemeToggle />
-                </div>
+                  {/* Theme toggle removed for admin UI */}
                 <form action="/api/admin/logout" method="POST">
                   <button
                     type="submit"
@@ -173,7 +169,7 @@ export function AdminSidebar() {
   // ─── DESKTOP: Classic Sticky Sidebar ────
   return (
     <aside className="sticky top-0 left-0 z-40 h-screen w-64 flex flex-col border-r border-white/60 bg-white/80 backdrop-blur-xl shadow-2xl shadow-slate-200/50">
-      <div className="flex h-16 shrink-0 items-center justify-between border-b border-white/40 px-4">
+        <div className="flex h-16 shrink-0 items-center justify-between border-b border-white/40 px-4">
         <Link href="/admin/dashboard" className="flex items-center gap-3">
           <div className="relative group">
             <div className="absolute inset-0 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-2xl blur opacity-30 group-hover:opacity-50 transition-opacity" />
@@ -186,7 +182,7 @@ export function AdminSidebar() {
             <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Workspace</p>
           </div>
         </Link>
-        <ThemeToggle />
+        {/* Theme toggle removed for admin UI */}
       </div>
 
       {/* Nav */}

@@ -81,6 +81,7 @@ export default async function ResultPage({
     .from("submissions")
     .select("id, score, submitted_at, status, duration_seconds")
     .eq("assignment_id", submission.assignment_id)
+    .eq("student_name", submission.student_name)
     .order("submitted_at", { ascending: false })
     .limit(10)
     .returns<SubmissionSummary[]>();

@@ -10,9 +10,10 @@ export async function GET() {
 
   try {
     const stats = await fetchAllStudentsStats();
-    return NextResponse.json(stats);
+    return NextResponse.json(stats || []);
   } catch (error) {
     console.error("Error fetching student stats:", error);
-    return NextResponse.json({ error: "Failed to fetch stats" }, { status: 500 });
+    // Return empty array instead of error to prevent frontend crash
+    return NextResponse.json([]);
   }
 }

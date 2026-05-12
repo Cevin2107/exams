@@ -41,15 +41,38 @@ export async function fetchAssignments(): Promise<Assignment[]> {
   }));
 }
 
-export async function fetchAssignmentsWithHistory(): Promise<Assignment[]> {
+export async function fetchAssignmentsWithHistory(studentId: string, studentName?: string): Promise<Assignment[]> {
   const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase
+
+  // Get assigned assignment IDs
+  const { data: assignmentsData } = await supabase
+    .from("assignment_assignments")
+    .select("assignment_id")
+    .eq("student_id", studentId);
+    
+  const assignedIds = assignmentsData?.map(a => a.assignment_id) || [];
+  
+  if (assignedIds.length === 0) {
+    return [];
+  }
+
+  // Filter submissions by studentName if available
+  const submissionsQuery = "submissions(id, submitted_at, score, status, duration_seconds, student_name)";
+  
+  let query = supabase
     .from("assignments")
-    .select("*, submissions(id, submitted_at, score, status, duration_seconds)")
+    .select(`*, ${submissionsQuery}`)
     .eq("is_hidden", false)
+    .in("id", assignedIds)
     .order("due_at", { ascending: true })
     .order("submitted_at", { foreignTable: "submissions", ascending: false })
     .limit(1, { foreignTable: "submissions" });
+
+  if (studentName) {
+    query = query.eq("submissions.student_name", studentName);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching assignments with history:", error);
@@ -173,6 +196,7 @@ export async function createAssignment(assignment: {
   totalScore: number;
   hideScore?: boolean;
   pointRanges?: Array<{ fromQuestion: number; toQuestion: number; totalPoints: number }>;
+  assignedIds?: string[];
 }) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
@@ -191,6 +215,15 @@ export async function createAssignment(assignment: {
     .single();
 
   if (error) throw error;
+
+  if (assignment.assignedIds && assignment.assignedIds.length > 0) {
+    const insertData = assignment.assignedIds.map((id) => ({
+      assignment_id: data.id,
+      student_id: id,
+    }));
+    await supabase.from("assignment_assignments").insert(insertData);
+  }
+
   return data;
 }
 
@@ -702,6 +735,10 @@ export async function fetchAllStudentsStats() {
 
   if (sessionsError) throw sessionsError;
 
+  // Lấy toàn bộ tài khoản đã đăng ký từ Supabase Auth để không bỏ sót học sinh chưa có bài làm
+  const { data: authUsers, error: authUsersError } = await supabase.auth.admin.listUsers();
+  if (authUsersError) throw authUsersError;
+
   // Group theo student_name
   const studentMap = new Map<string, {
     studentName: string;
@@ -730,6 +767,37 @@ export async function fetchAllStudentsStats() {
     }>;
   }>();
 
+  // Prefill all registered accounts from auth so students with zero activity still appear
+  (authUsers?.users || []).forEach((user) => {
+    const name = (user.user_metadata?.full_name as string | undefined)?.trim() || user.email || "Không xác định";
+    if (!studentMap.has(name)) {
+      studentMap.set(name, {
+        studentName: name,
+        totalSubmissions: 0,
+        inProgressCount: 0,
+        submissions: [],
+        inProgress: [],
+      });
+    }
+  });
+
+  // Backfill profiles too, để không bỏ sót dữ liệu cũ trong student_profiles
+  const { data: profiles } = await supabase.from("student_profiles").select("full_name");
+  if (profiles) {
+    profiles.forEach((profile) => {
+      const name = profile.full_name;
+      if (name && !studentMap.has(name)) {
+        studentMap.set(name, {
+          studentName: name,
+          totalSubmissions: 0,
+          inProgressCount: 0,
+          submissions: [],
+          inProgress: [],
+        });
+      }
+    });
+  }
+
   // Thêm submissions
   type SubmissionRow = {
     id: string;
@@ -741,7 +809,7 @@ export async function fetchAllStudentsStats() {
   };
   
   ((submissions as unknown as SubmissionRow[]) || []).forEach((sub) => {
-    const name = sub.student_name;
+    const name = sub.student_name || "Không xác định";
     if (!studentMap.has(name)) {
       studentMap.set(name, {
         studentName: name,
@@ -778,7 +846,7 @@ export async function fetchAllStudentsStats() {
   };
   
   ((activeSessions as unknown as SessionRow[]) || []).forEach((session) => {
-    const name = session.student_name;
+    const name = session.student_name || "Không xác định";
     if (!studentMap.has(name)) {
       studentMap.set(name, {
         studentName: name,
@@ -806,7 +874,13 @@ export async function fetchAllStudentsStats() {
     });
   });
 
-  return Array.from(studentMap.values());
+  const result = Array.from(studentMap.values());
+  result.sort((a, b) => {
+    const nameA = a.studentName || "";
+    const nameB = b.studentName || "";
+    return nameA.localeCompare(nameB);
+  });
+  return result;
 }
 
 // Thống kê chi tiết của 1 học sinh theo tên

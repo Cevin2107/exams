@@ -4,6 +4,7 @@ import { useState } from "react";
 import { OverviewTab } from "./OverviewTab";
 import { QuestionBuilderTab } from "./QuestionBuilderTab";
 import { StudentSessionsTab } from "./StudentSessionsTab";
+import { AssignTab } from "./AssignTab";
 import { Button } from "@/components/ui/Button";
 import Link from "next/link";
 import { ArrowLeft, Settings, ListChecks, Users } from "lucide-react";
@@ -16,12 +17,13 @@ interface AssignmentDetailTabsProps {
 }
 
 export function AssignmentDetailTabs({ assignmentId, initialAssignment, initialQuestions }: AssignmentDetailTabsProps) {
-  const [activeTab, setActiveTab] = useState<"overview" | "questions" | "students">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "questions" | "students" | "assign">("overview");
   
   const TABS = [
     { id: "overview", label: "Tổng quan & Cài đặt", shortLabel: "Tổng quan", icon: Settings },
     { id: "questions", label: "Bộ câu hỏi", shortLabel: "Câu hỏi", icon: ListChecks },
     { id: "students", label: "Học sinh & Chấm điểm", shortLabel: "Học sinh", icon: Users },
+    { id: "assign", label: "Giao bài", shortLabel: "Giao bài", icon: Users },
   ] as const;
 
   return (
@@ -86,6 +88,9 @@ export function AssignmentDetailTabs({ assignmentId, initialAssignment, initialQ
         )}
         {activeTab === "students" && (
           <StudentSessionsTab assignmentId={assignmentId} />
+        )}
+        {activeTab === "assign" && (
+          <AssignTab assignmentId={assignmentId} />
         )}
       </div>
     </div>

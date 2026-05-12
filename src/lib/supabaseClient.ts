@@ -9,11 +9,16 @@ const getEnv = () => {
   return { url, anonKey };
 };
 
-export const createSupabaseBrowserClient = (): SupabaseClient => {
+import { createBrowserClient } from "@supabase/ssr";
+
+// Browser client (cho use client components)
+export const createSupabaseBrowserClient = () => {
   const { url, anonKey } = getEnv();
-  return createClient(url, anonKey);
+  return createBrowserClient(url, anonKey);
 };
 
+// Server client (dùng trong server components và API routes)
+// Không dùng cookies ở đây - để middleware xử lý
 export const createSupabaseServerClient = (): SupabaseClient => {
   const { url, anonKey } = getEnv();
   return createClient(url, anonKey, {

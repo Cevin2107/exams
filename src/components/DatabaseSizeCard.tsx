@@ -26,8 +26,19 @@ export default function DatabaseSizeCard() {
     try {
       setLoading(true);
       const res = await fetch("/api/admin/database-size");
-      if (!res.ok) throw new Error("Failed to fetch database size");
+      const contentType = res.headers.get("content-type") || "";
+
+      if (!contentType.includes("application/json")) {
+        const text = await res.text();
+        throw new Error(`Non-JSON response: ${text.slice(0, 80)}`);
+      }
+
       const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to fetch database size");
+      }
+
       setSizeInfo(data);
     } catch (err) {
       setError("Không thể lấy thông tin dung lượng");

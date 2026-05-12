@@ -15,6 +15,7 @@ import { useTheme } from "@/providers/ThemeProvider";
 interface Props {
   assignment: Assignment;
   questions: Question[];
+  initialStudentName?: string;
 }
 
 const formatClock = (seconds: number) => {
@@ -38,9 +39,9 @@ const formatVietnamTime = (date: Date) => {
   return new Intl.DateTimeFormat('vi-VN', options).format(date);
 };
 
-export function AssignmentTaking({ assignment, questions: initialQuestions }: Props) {
+export function AssignmentTaking({ assignment, questions: initialQuestions, initialStudentName }: Props) {
   const router = useRouter();
-  const [studentName, setStudentName] = useState<string | null>(null);
+  const [studentName, setStudentName] = useState<string | null>(initialStudentName || null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const hasTimer = Boolean(assignment.durationMinutes);
   const [remaining, setRemaining] = useState(hasTimer ? (assignment.durationMinutes ?? 0) * 60 : 0);
@@ -60,16 +61,13 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
   const [lastSaveTime, setLastSaveTime] = useState<number | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const { theme, toggleTheme } = useTheme();
-  
-  const lastSavedAnswers = useRef<string>("");
-  const isInitialLoad = useRef(true);
 
   const isDark = theme === "dark";
 
   useEffect(() => {
     setIsMounted(true);
     if (typeof window === "undefined") return;
-    const savedName = localStorage.getItem(`student-name-${assignment.id}`);
+    const savedName = localStorage.getItem(`student-name-${assignment.id}`) || initialStudentName;
     const savedSessionId = localStorage.getItem(`session-${assignment.id}`);
     
     if (!savedName || !savedSessionId) {
@@ -158,7 +156,6 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
           const data = await res.json();
           if (data.draftAnswers && Object.keys(data.draftAnswers).length > 0) {
             setAnswers(data.draftAnswers);
-            lastSavedAnswers.current = JSON.stringify(data.draftAnswers);
           }
         }
       } catch (err) {
@@ -166,25 +163,16 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
           const saved = localStorage.getItem(draftKey);
           if (saved) {
             const parsed = JSON.parse(saved);
-            if (parsed?.answers) {
-              setAnswers(parsed.answers);
-              lastSavedAnswers.current = JSON.stringify(parsed.answers);
-            }
+            if (parsed?.answers) setAnswers(parsed.answers);
           }
         } catch (localErr) {}
-      } finally {
-        isInitialLoad.current = false;
       }
     };
     loadDraft();
   }, [sessionId, draftKey]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !sessionId || isInitialLoad.current) return;
-    
-    const currentAnswersStr = JSON.stringify(answers);
-    if (currentAnswersStr === lastSavedAnswers.current) return;
-
+    if (typeof window === "undefined" || !sessionId) return;
     const saveDraft = async () => {
       try {
         setIsSaving(true);
@@ -194,19 +182,17 @@ export function AssignmentTaking({ assignment, questions: initialQuestions }: Pr
           body: JSON.stringify({ draftAnswers: answers }),
         });
         localStorage.setItem(draftKey, JSON.stringify({ answers }));
-        lastSavedAnswers.current = currentAnswersStr;
         setLastSaveTime(Date.now());
       } catch (err) {
         try {
           localStorage.setItem(draftKey, JSON.stringify({ answers }));
-          lastSavedAnswers.current = currentAnswersStr;
           setLastSaveTime(Date.now());
         } catch (localErr) {}
       } finally {
         setIsSaving(false);
       }
     };
-    const id = setTimeout(saveDraft, 1000); // Tăng debounce lên 1s
+    const id = setTimeout(saveDraft, 500);
     return () => clearTimeout(id);
   }, [answers, sessionId, draftKey]);
 

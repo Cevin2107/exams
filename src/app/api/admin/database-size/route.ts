@@ -3,12 +3,12 @@ import { createSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { checkAdminAuth } from "@/lib/adminAuth";
 
 export async function GET() {
-  const isAuth = await checkAdminAuth();
-  if (!isAuth) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   try {
+    const isAuth = await checkAdminAuth();
+    if (!isAuth) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const supabase = createSupabaseAdmin();
 
     // Query to get database size information

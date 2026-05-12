@@ -103,12 +103,22 @@ export default function AdminStatsPage() {
           window.location.href = "/admin";
           return;
         }
-        throw new Error("Failed to fetch stats");
+        const errorData = await res.text();
+        console.error("API error response:", res.status, errorData);
+        throw new Error(`Failed to fetch stats: ${res.status}`);
       }
       const data = await res.json();
-      setStudents(data);
+      if (Array.isArray(data)) {
+        setStudents(data);
+      } else {
+        console.error("Unexpected data format:", data);
+        setStudents([]);
+      }
     } catch (error) {
       console.error("Error loading stats:", error);
+      if (!silent) {
+        alert(`Lỗi khi tải dữ liệu: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
     } finally {
       if (!silent) {
         setLoading(false);
@@ -296,7 +306,7 @@ export default function AdminStatsPage() {
   };
 
   const deleteAllStudentData = async (studentName: string) => {
-    if (!confirm(`⚠️ BẠN CÓ CHẮC CHẮN muốn xóa TẤT CẢ dữ liệu của học sinh "${studentName}"?\n\nĐiều này sẽ xóa:\n- Tất cả bài đã nộp\n- Tất cả bài đang làm dở\n- Không thể khôi phục!\n\nNhấn OK để xóa.`)) {
+    if (!confirm(`⚠️ BẠN CÓ CHẮC CHẮN muốn xóa TẬT CẢ của học sinh "${studentName}"?\n\nĐiều này sẽ xóa:\n- Tài khoản auth (email, mật khẩu)\n- Tất cả bài đã nộp\n- Tất cả bài đang làm dở\n- Không thể khôi phục!\n\nNhấn OK để xóa.`)) {
       return;
     }
 
@@ -307,9 +317,10 @@ export default function AdminStatsPage() {
       });
 
       if (res.ok) {
+        const data = await res.json();
         // Reload stats
         await loadStats(true);
-        alert("Đã xóa tất cả dữ liệu của học sinh!");
+        alert(`Đã xóa tất cả dữ liệu của học sinh!\n\n${data.authUserDeleted ? 'Tài khoản auth đã được xóa.' : 'Không tìm thấy tài khoản auth khớp tên/email.'}`);
         setExpandedStudent(null);
       } else {
         throw new Error("Failed to delete");
@@ -445,7 +456,7 @@ export default function AdminStatsPage() {
                           <div className="absolute inset-0 bg-gradient-to-br from-indigo-400 to-violet-500 rounded-2xl blur opacity-40 group-hover:opacity-60 transition-opacity" />
                           <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/30">
                             <span className="text-xl font-bold text-white">
-                              {student.studentName.charAt(0).toUpperCase()}
+                              {(student.studentName || "?").charAt(0).toUpperCase()}
                             </span>
                           </div>
                         </div>

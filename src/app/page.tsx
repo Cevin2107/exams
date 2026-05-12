@@ -17,8 +17,32 @@ export const metadata: Metadata = {
   },
 };
 
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+
 export default async function HomePage() {
-  const assignments = await fetchAssignmentsWithHistory();
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          // Ignore
+        },
+      },
+    }
+  );
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return null; // Handled by middleware
+  }
+
+  const assignments = await fetchAssignmentsWithHistory(user.id, user.user_metadata?.full_name);
 
   return (
     <main className="min-h-screen transition-colors duration-500 bg-gradient-to-br from-slate-50 via-blue-50/20 to-indigo-50/30 dark:from-[#0B1120] dark:via-[#0B1120] dark:to-[#111827] relative">
@@ -34,7 +58,7 @@ export default async function HomePage() {
         <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-violet-900/20 blur-[120px] rounded-full mix-blend-screen" />
       </div>
 
-      <HeaderBar />
+      <HeaderBar studentName={user.user_metadata?.full_name} />
 
       {/* Hero Section - Glassmorphic */}
       <div className="relative">
@@ -59,7 +83,7 @@ export default async function HomePage() {
               </div>
               
               <h2 className="text-2xl md:text-3xl font-bold text-slate-800 dark:text-slate-100 mb-3">
-                Danh sách bài tập
+                Xin chào, {user.user_metadata?.full_name || "Học sinh"}! 👋
               </h2>
               <p className="text-slate-600 dark:text-slate-400 text-sm sm:text-base md:text-lg max-w-2xl mx-auto px-4">
                 Hoàn thành đúng hạn · Được làm lại nhiều lần · Tự động lưu nháp

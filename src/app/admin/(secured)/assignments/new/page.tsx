@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
@@ -23,6 +23,25 @@ export default function NewAssignmentPage() {
   const [gradeCustom, setGradeCustom] = useState("");
   const [hideScore, setHideScore] = useState(false);
   const [pointRanges, setPointRanges] = useState<Array<{ fromQuestion: number; toQuestion: number; totalPoints: number }>>([]);
+
+  const [students, setStudents] = useState<Array<{id: string; full_name: string}>>([]);
+  const [assignedIds, setAssignedIds] = useState<string[]>([]);
+  const [loadingStudents, setLoadingStudents] = useState(true);
+  useEffect(() => {
+    fetch("/api/admin/students")
+      .then(res => res.json())
+      .then(data => {
+        if (data.students) {
+          setStudents(data.students);
+          setAssignedIds(data.students.map((s: any) => s.id)); // Default assign to all
+        }
+        setLoadingStudents(false);
+      })
+      .catch(err => {
+        console.error(err);
+        setLoadingStudents(false);
+      });
+  }, []);
 
   const resolveSubjectAndGrade = () => {
     const resolvedSubject = subjectSelect === CUSTOM_VALUE ? subjectCustom.trim() : subjectSelect;
@@ -67,6 +86,7 @@ export default function NewAssignmentPage() {
       totalScore: parseFloat(formData.get("totalScore") as string) || 10,
       hideScore,
       pointRanges: pointRanges.length > 0 ? pointRanges : undefined,
+      assignedIds,
     };
 
     try {
@@ -326,6 +346,53 @@ export default function NewAssignmentPage() {
                )}
            </Card>
         </div>
+
+        {/* Giao bài */}
+        <Card className="p-5">
+           <div className="flex items-center justify-between mb-4">
+             <div>
+               <h3 className="text-sm font-bold text-slate-900">Giao bài cho học sinh</h3>
+               <p className="text-xs text-slate-500 mt-1">Chọn học sinh được phép nhìn thấy và làm bài tập này.</p>
+             </div>
+             <Button 
+               type="button" 
+               variant="outline" 
+               size="sm" 
+               onClick={() => {
+                 if (assignedIds.length === students.length) {
+                   setAssignedIds([]);
+                 } else {
+                   setAssignedIds(students.map(s => s.id));
+                 }
+               }}
+             >
+               {assignedIds.length === students.length ? "Bỏ chọn tất cả" : "Chọn tất cả"}
+             </Button>
+           </div>
+           
+           {loadingStudents ? (
+             <div className="text-sm text-slate-500 bg-slate-50 rounded-xl p-4 text-center">Đang tải danh sách học sinh...</div>
+           ) : students.length === 0 ? (
+             <div className="text-sm text-slate-500 bg-slate-50 rounded-xl p-4 text-center">Chưa có học sinh nào trên hệ thống.</div>
+           ) : (
+             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-60 overflow-y-auto p-2 border border-slate-100 rounded-xl bg-slate-50/50">
+               {students.map(s => (
+                 <label key={s.id} className="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-100 cursor-pointer transition border border-transparent hover:border-slate-200">
+                   <input
+                     type="checkbox"
+                     className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600"
+                     checked={assignedIds.includes(s.id)}
+                     onChange={(e) => {
+                       if (e.target.checked) setAssignedIds(prev => [...prev, s.id]);
+                       else setAssignedIds(prev => prev.filter(id => id !== s.id));
+                     }}
+                   />
+                   <span className="text-sm font-medium text-slate-700 truncate">{s.full_name}</span>
+                 </label>
+               ))}
+             </div>
+           )}
+        </Card>
 
         <div className="flex justify-end pt-4">
            <Link href="/admin/dashboard">

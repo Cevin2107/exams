@@ -38,6 +38,20 @@ export async function DELETE(
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
     const supabase = createClient(url, serviceKey);
+    let authUserDeleted = false;
+    let authUserId: string | null = null;
+
+    const { data: usersData, error: usersError } = await supabase.auth.admin.listUsers();
+    if (usersError) throw usersError;
+
+    const matchingUser = (usersData.users || []).find((user) => {
+      const fullName = (user.user_metadata?.full_name as string | undefined)?.trim();
+      return fullName === decodedName || user.email === decodedName;
+    });
+
+    if (matchingUser) {
+      authUserId = matchingUser.id;
+    }
 
     // Xóa tất cả submissions của học sinh (cascade sẽ tự động xóa answers)
     const { error: submissionsError } = await supabase
@@ -55,7 +69,21 @@ export async function DELETE(
 
     if (sessionsError) throw sessionsError;
 
-    return NextResponse.json({ success: true, message: "All student data deleted" });
+    if (authUserId) {
+      const { error: deleteAuthError } = await supabase.auth.admin.deleteUser(authUserId);
+      if (deleteAuthError) throw deleteAuthError;
+      authUserDeleted = true;
+    }
+
+    return NextResponse.json({ 
+      success: true, 
+      message: "All student data deleted",
+      authUserDeleted,
+      authUserId,
+      note: authUserDeleted
+        ? "Auth account đã bị xóa"
+        : "Không tìm thấy auth account khớp tên/email"
+    });
   } catch (error) {
     console.error("Error deleting student data:", error);
     return NextResponse.json({ error: "Failed to delete student data" }, { status: 500 });

@@ -2,11 +2,15 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useRouter, usePathname } from "next/navigation";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { LogOut } from "lucide-react";
 
-export function HeaderBar() {
+export function HeaderBar({ studentName }: { studentName?: string }) {
   const [greeting, setGreeting] = useState("");
   const [greetingEmoji, setGreetingEmoji] = useState("");
+  const [loggingOut, setLoggingOut] = useState(false);
+  const router = useRouter();
 
   useEffect(() => {
     const hour = new Date().getHours();
@@ -14,6 +18,22 @@ export function HeaderBar() {
     else if (hour < 18) { setGreeting("Chào buổi chiều"); setGreetingEmoji("☀️"); }
     else { setGreeting("Chào buổi tối"); setGreetingEmoji("🌙"); }
   }, []);
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      const { createSupabaseBrowserClient } = await import("@/lib/supabaseClient");
+      const supabase = createSupabaseBrowserClient();
+      await supabase.auth.signOut();
+      router.push("/login");
+    } catch (error) {
+      console.error("Logout error:", error);
+      setLoggingOut(false);
+    }
+  };
+
+  const pathname = usePathname();
+  const isAdminPath = pathname?.startsWith('/admin');
 
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200/70 dark:border-slate-800 bg-white/95 dark:bg-[#0B1120]/80 shadow-sm backdrop-blur-md transition-colors duration-500">
@@ -27,12 +47,15 @@ export function HeaderBar() {
           <div suppressHydrationWarning>
             <p className="text-sm font-bold text-slate-900 dark:text-white leading-tight">Gia sư Đào Bá Anh Quân</p>
             {greeting && (
-              <p className="text-xs text-slate-400 leading-tight">{greetingEmoji} {greeting}</p>
+              <p className="text-xs text-slate-400 leading-tight">
+                {greetingEmoji} {greeting}{studentName ? `, ${studentName}` : ''}
+              </p>
             )}
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <ThemeToggle />
+          {/* Hide theme toggle on admin pages */}
+          {!isAdminPath && <ThemeToggle />}
           <Link
             href="/admin"
             className="flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 transition hover:border-indigo-200 dark:hover:border-indigo-500/50 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 hover:text-indigo-700 dark:hover:text-indigo-400"
@@ -43,6 +66,15 @@ export function HeaderBar() {
             </svg>
             Quản lý
           </Link>
+          <button
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className="flex items-center gap-1.5 rounded-xl border border-red-200 dark:border-red-700/50 px-3 py-1.5 text-xs font-semibold text-red-600 dark:text-red-400 transition hover:border-red-300 dark:hover:border-red-500/50 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50"
+            title="Đăng xuất"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Đăng xuất</span>
+          </button>
         </div>
       </div>
     </header>
