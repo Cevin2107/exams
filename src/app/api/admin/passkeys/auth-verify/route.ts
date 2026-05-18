@@ -33,6 +33,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Passkey not found" }, { status: 404 });
     }
 
+    const { isoBase64URL } = require("@simplewebauthn/server/helpers");
+    const publicKeyBytes = typeof passkey.public_key === "string" ? isoBase64URL.toBuffer(passkey.public_key) : passkey.public_key;
+
     const { rpID, rpOrigin } = getPasskeyRelyingParty(req);
     const verification = await verifyAuthenticationResponse({
       response: assertionResponse,
@@ -41,7 +44,7 @@ export async function POST(req: NextRequest) {
       expectedRPID: rpID,
       authenticator: {
         credentialID: passkey.credential_id,
-        credentialPublicKey: passkey.public_key,
+        credentialPublicKey: publicKeyBytes,
         counter: passkey.counter,
       },
       requireUserVerification: true,
@@ -73,9 +76,9 @@ export async function POST(req: NextRequest) {
     });
 
     return response;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Passkey auth verify error:", error);
     const message = error instanceof Error ? error.message : "Khong the xac thuc";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message, stack: error?.stack, rawError: String(error) }, { status: 500 });
   }
 }

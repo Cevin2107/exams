@@ -52,11 +52,13 @@ export default function AdminLoginPage() {
       });
       const verifyData = await readJsonResponse(verifyRes);
       if (!verifyRes.ok) {
+        console.error("Passkey Verify Error Detail:", verifyData);
         throw new Error(verifyData.error || "Không thể xác thực");
       }
 
       window.location.assign("/admin/dashboard");
     } catch (err: any) {
+      console.error("Passkey exception:", err);
       setPasskeyError(err?.message || "Đăng nhập bằng vân tay thất bại");
     } finally {
       setPasskeyLoading(false);
