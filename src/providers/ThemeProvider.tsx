@@ -30,13 +30,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     setTheme((prev) => {
       const nextTheme = prev === "light" ? "dark" : "light";
       localStorage.setItem("theme", nextTheme);
-      
+
       if (nextTheme === "dark") {
         document.documentElement.classList.add("dark");
       } else {
         document.documentElement.classList.remove("dark");
       }
-      
+
       return nextTheme;
     });
   };

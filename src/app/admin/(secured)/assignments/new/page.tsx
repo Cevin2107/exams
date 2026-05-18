@@ -165,7 +165,7 @@ export default function NewAssignmentPage() {
                     name="subjectSelect"
                     value={subjectSelect}
                     onChange={(e) => setSubjectSelect(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm bg-white"
+                    className="w-full bg-white text-slate-900 rounded-xl border border-slate-200 px-4 py-2.5 text-sm"
                     required
                   >
                     {SUBJECT_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -195,7 +195,7 @@ export default function NewAssignmentPage() {
                     name="gradeSelect"
                     value={gradeSelect}
                     onChange={(e) => setGradeSelect(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm bg-white"
+                    className="w-full bg-white text-slate-900 rounded-xl border border-slate-200 px-4 py-2.5 text-sm"
                     required
                   >
                     {GRADE_OPTIONS.map((g) => <option key={g} value={g}>{g}</option>)}
@@ -208,7 +208,7 @@ export default function NewAssignmentPage() {
                       value={gradeCustom}
                       onChange={(e) => setGradeCustom(e.target.value)}
                       required
-                      className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm"
+                      className="w-full bg-white text-slate-900 rounded-xl border border-slate-200 px-4 py-2.5 text-sm"
                       placeholder="Nhập lớp khác (vd: Lớp 10 nâng cao)"
                     />
                   )}
@@ -225,7 +225,7 @@ export default function NewAssignmentPage() {
                 <input
                   type="datetime-local"
                   name="dueAt"
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm bg-white"
+                  className="w-full bg-white text-slate-900 rounded-xl border border-slate-200 px-4 py-2.5 text-sm"
                 />
               </div>
               <div className="space-y-2">
@@ -236,7 +236,7 @@ export default function NewAssignmentPage() {
                 <input
                   type="number"
                   name="durationMinutes"
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm"
+                  className="w-full bg-white text-slate-900 rounded-xl border border-slate-200 px-4 py-2.5 text-sm"
                   placeholder="Để trống nếu không đếm ngược"
                 />
               </div>
@@ -251,7 +251,7 @@ export default function NewAssignmentPage() {
                   step="0.5"
                   defaultValue="10"
                   required
-                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm"
+                  className="w-full bg-white text-slate-900 rounded-xl border border-slate-200 px-4 py-2.5 text-sm"
                 />
               </div>
             </div>
