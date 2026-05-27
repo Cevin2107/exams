@@ -34,16 +34,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Registration failed" }, { status: 400 });
     }
 
-    const { credentialID, credentialPublicKey, counter } = verification.registrationInfo;
+    const { credential } = verification.registrationInfo;
 
-    const credentialIdBase64 = attestationResponse?.id || (credentialID ? isoBase64URL.fromBuffer(
+    const credentialIdBase64 = attestationResponse?.id || (credential?.id ? isoBase64URL.fromBuffer(
       new Uint8Array(
-        (credentialID as any).buffer || credentialID,
-        (credentialID as any).byteOffset || 0,
-        (credentialID as any).byteLength || (credentialID as any).length
+        (credential.id as any).buffer || credential.id,
+        (credential.id as any).byteOffset || 0,
+        (credential.id as any).byteLength || (credential.id as any).length
       )
     ) : "");
-    const publicKeyBytes = new Uint8Array(credentialPublicKey);
+    const publicKeyBytes = new Uint8Array(credential.publicKey);
     const publicKeyLength = publicKeyBytes.length;
     const publicKeyBase64 = isoBase64URL.fromBuffer(publicKeyBytes);
 
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
       name: name || null,
       credential_id: credentialIdBase64,
       public_key: publicKeyBase64,
-      counter,
+      counter: credential.counter,
       transports: attestationResponse?.transports || null,
     });
 
