@@ -11,7 +11,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
     const assignment = await fetchAssignmentByIdAdmin(id);
 
     if (assignment) {
-      const title = `${assignment.title} - Gia sư Đào Bá Anh Quân`;
+      const title = `${assignment.title} + Gia sư Đào Bá Anh Quân`;
       const description = `Bài tập ${assignment.subject} ${assignment.grade}. Hoàn thành đúng hạn, được làm lại nhiều lần.`;
       
       return {

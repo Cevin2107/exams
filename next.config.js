@@ -1,9 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  devIndicators: {
-    appIsrStatus: false,
-  },
   // Disable caching để tránh hiện bài tập cũ
   experimental: {
     staleTimes: {
