@@ -42,9 +42,9 @@ export async function POST(req: NextRequest) {
       expectedChallenge: challenge,
       expectedOrigin: rpOrigin,
       expectedRPID: rpID,
-      authenticator: {
-        credentialID: passkey.credential_id,
-        credentialPublicKey: publicKeyBytes,
+      credential: {
+        id: passkey.credential_id,
+        publicKey: publicKeyBytes,
         counter: passkey.counter,
       },
       requireUserVerification: true,
