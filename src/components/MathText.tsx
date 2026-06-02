@@ -10,6 +10,9 @@ function humanizePlainLatex(text: string) {
   if (!text) return text;
 
   return text
+    // Recover malformed delimiters from AI/OCR output.
+    .replace(/≤ft/g, "\\left")
+    .replace(/≥ight/g, "\\right")
     // Repair common OCR/AI typo for fraction command.
     .replace(/[/\\]\s*fraq/gi, "\\frac")
     .replace(/\\{2,}/g, "\\")
@@ -17,8 +20,8 @@ function humanizePlainLatex(text: string) {
     .replace(/\\times|\\cdot/gi, "×")
     .replace(/\\div/gi, "÷")
     .replace(/\\pm/gi, "±")
-    .replace(/\\leq|\\le/gi, "≤")
-    .replace(/\\geq|\\ge/gi, "≥")
+    .replace(/\\leq?(?![a-zA-Z])/gi, "≤")
+    .replace(/\\geq?(?![a-zA-Z])/gi, "≥")
     .replace(/\\neq/gi, "≠")
     .replace(/\\approx/gi, "≈")
     .replace(/\\infty/gi, "∞")
@@ -46,10 +49,38 @@ function normalizeFractionsForMathDetection(text: string) {
     .replace(/(^|[^\w\\])(\d{1,4})\s*\/\s*(\d{1,4})(?=$|[^\w])/g, (_m, pre, a, b) => `${pre}\\frac{${a}}{${b}}`);
 }
 
+function ensureInlineMathDelimiters(text: string) {
+  if (!text) return text;
+
+  const protectedSegments: string[] = [];
+  const placeholderPrefix = "@@MATH_SEGMENT_";
+  const withPlaceholders = text.replace(/\$\$[\s\S]+?\$\$|\$[^$\n]+\$/g, (segment) => {
+    const idx = protectedSegments.push(segment) - 1;
+    return `${placeholderPrefix}${idx}@@`;
+  });
+
+  const bareLatexRegex =
+    /(^|[\s(\[{:;=,+\-])((?:\\(?:frac\s*\{[^{}]+\}\s*\{[^{}]+\}|sqrt\s*\{[^{}]+\}|sum|int|lim|sin|cos|tan|log|ln|pi|alpha|beta|gamma|theta)|[A-Za-z0-9]+(?:_\{[^{}]+\}|_[A-Za-z0-9]+|\^\{[^{}]+\}|\^[A-Za-z0-9]+){1,3}))(?=($|[\s)\]}:;,.!?]))/g;
+
+  const operatorMathRegex =
+    /(^|[\s(\[{:;])((?:[A-Za-z0-9α-ωΑ-Ωπ∞()]+(?:\s*[+\-*/=×÷≤≥≠±]\s*[A-Za-z0-9α-ωΑ-Ωπ∞()]+){1,}))(?![^$]*\$)(?=($|[\s)\]}:;,.!?]))/g;
+
+  let wrapped = withPlaceholders.replace(bareLatexRegex, (_m, leading, expr) => `${leading}$${expr}$`);
+  wrapped = wrapped.replace(operatorMathRegex, (_m, leading, expr) => `${leading}$${expr.trim()}$`);
+
+  return wrapped.replace(new RegExp(`${placeholderPrefix}(\\d+)@@`, "g"), (_m, idx) => {
+    const parsed = Number.parseInt(idx, 10);
+    return Number.isFinite(parsed) ? protectedSegments[parsed] || "" : "";
+  });
+}
+
 function renderLatexSegment(content: string, displayMode: boolean) {
   const normalizedContent = content
+    // Recover malformed delimiters from AI/OCR output.
+    .replace(/≤ft/g, "\\left")
+    .replace(/≥ight/g, "\\right")
     // AI/OCR sometimes emits \\\frac or \\sqrt; KaTeX interprets leading \\ as a line break.
-    .replace(/\\{2,}(?=(?:frac|sqrt|sum|int|lim|sin|cos|tan|log|ln|pi|alpha|beta|gamma|theta)\b)/g, "\\");
+    .replace(/\\{2,}(?=(?:left|right|frac|sqrt|sum|int|lim|sin|cos|tan|log|ln|pi|alpha|beta|gamma|theta)\b)/g, "\\");
 
   try {
     return katex.renderToString(normalizedContent, {
@@ -64,12 +95,14 @@ function renderLatexSegment(content: string, displayMode: boolean) {
 }
 
 function splitMathSegments(text: string) {
-  const normalized = normalizeFractionsForMathDetection(
-    text
-    .replace(/\\\[/g, "$$")
-    .replace(/\\\]/g, "$$")
-    .replace(/\\\(/g, "$")
-    .replace(/\\\)/g, "$")
+  const normalized = ensureInlineMathDelimiters(
+    normalizeFractionsForMathDetection(
+      text
+      .replace(/\\\[/g, "$$")
+      .replace(/\\\]/g, "$$")
+      .replace(/\\\(/g, "$")
+      .replace(/\\\)/g, "$")
+    )
   );
 
   const regex = /(\$\$[\s\S]+?\$\$|\$[\s\S]+?\$|\\(?:frac\s*\{[^{}]+\}\s*\{[^{}]+\}|sqrt\s*\{[^{}]+\}|[a-zA-Z]+)|[A-Za-z0-9]+(?:_\{[^{}]+\}|_[A-Za-z0-9]+|\^\{[^{}]+\}|\^[A-Za-z0-9]+){1,3})/g;

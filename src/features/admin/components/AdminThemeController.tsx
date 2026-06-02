@@ -1,26 +1,26 @@
 "use client";
 
-import { useEffect } from "react";
-import { usePathname } from "next/navigation";
+import { useLayoutEffect } from "react";
 
 export function AdminThemeController({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
+  useLayoutEffect(() => {
+    const previousColorScheme = document.documentElement.style.colorScheme;
+    const hadDarkClass = document.documentElement.classList.contains("dark");
 
-  useEffect(() => {
-    // Check if we are in admin section
-    if (pathname?.startsWith("/admin")) {
-      // Remove dark class explicitly when entering admin
-      document.documentElement.classList.remove("dark");
-      document.documentElement.style.colorScheme = 'light';
-    } else {
-      // If leaving admin, restore based on theme
+    document.documentElement.classList.remove("dark");
+    document.documentElement.style.colorScheme = "light";
+
+    return () => {
       const savedTheme = localStorage.getItem("theme");
-      document.documentElement.style.colorScheme = '';
-      if (savedTheme === "dark") {
+      document.documentElement.style.colorScheme = previousColorScheme;
+
+      if (savedTheme === "dark" || (savedTheme !== "light" && hadDarkClass)) {
         document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
       }
-    }
-  }, [pathname]);
+    };
+  }, []);
 
   return <>{children}</>;
 }

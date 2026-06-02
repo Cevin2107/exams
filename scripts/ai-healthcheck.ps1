@@ -99,18 +99,8 @@ $results += Invoke-AiTest -Name "PUTER_QWEN_SOLVE" -Url "https://api.puter.com/p
   )
 }
 
-$results += Invoke-AiTest -Name "OPENROUTER_STEPFUN_EXTRACT" -Url "https://openrouter.ai/api/v1/chat/completions" -ApiKey $envMap["OPENROUTER_API_KEY"] -TimeoutSec 60 -Payload @{
-  model = "stepfun/step-3.5-flash:free"
-  temperature = 0
-  max_tokens = 700
-  messages = @(
-    @{ role = "system"; content = "Chi tra JSON hop le." },
-    @{ role = "user"; content = $extractPrompt }
-  )
-}
-
-$results += Invoke-AiTest -Name "GROQ_LLAMA_EXTRACT" -Url "https://api.groq.com/openai/v1/chat/completions" -ApiKey $envMap["GROQ_API_KEY"] -TimeoutSec 60 -Payload @{
-  model = "llama-3.1-8b-instant"
+$results += Invoke-AiTest -Name "OPENROUTER_OWL_EXTRACT" -Url "https://openrouter.ai/api/v1/chat/completions" -ApiKey $envMap["OPENROUTER_API_KEY"] -TimeoutSec 60 -Payload @{
+  model = "openrouter/owl-alpha"
   temperature = 0
   max_tokens = 700
   messages = @(

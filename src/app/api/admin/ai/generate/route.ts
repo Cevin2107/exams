@@ -11,11 +11,11 @@ function classifyAiError(
 ): { status: number; publicMessage: string; code: string } {
   const message = error instanceof Error ? error.message : "Unknown error";
 
-  if (message.includes("Thiếu GROQ_API_KEY")) {
+  if (message.includes("Thiếu OPENROUTER_API_KEY")) {
     return {
       status: 503,
-      publicMessage: "Server chưa cấu hình GROQ_API_KEY trên môi trường deploy.",
-      code: "MISSING_GROQ_KEY",
+      publicMessage: "Server chưa cấu hình OPENROUTER_API_KEY trên môi trường deploy.",
+      code: "MISSING_OPENROUTER_KEY",
     };
   }
 
