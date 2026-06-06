@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { LogOut } from "lucide-react";
+import { LogOut, CalendarPlus } from "lucide-react";
 
 export function HeaderBar({ studentName }: { studentName?: string }) {
   const [greeting, setGreeting] = useState("");
@@ -56,6 +56,15 @@ export function HeaderBar({ studentName }: { studentName?: string }) {
         <div className="flex items-center gap-2">
           {/* Hide theme toggle on admin pages */}
           {!isAdminPath && <ThemeToggle />}
+          
+          <Link
+            href="/register-schedule"
+            className="flex items-center gap-1.5 rounded-xl border border-indigo-200 dark:border-indigo-700/50 bg-indigo-50 dark:bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-700 dark:text-indigo-400 transition hover:border-indigo-300 dark:hover:border-indigo-500/70 hover:bg-indigo-100 dark:hover:bg-indigo-500/20"
+          >
+            <CalendarPlus className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Đăng ký lịch học</span>
+          </Link>
+
           <Link
             href="/admin"
             className="flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 transition hover:border-indigo-200 dark:hover:border-indigo-500/50 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 hover:text-indigo-700 dark:hover:text-indigo-400"

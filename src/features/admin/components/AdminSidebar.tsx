@@ -15,12 +15,14 @@ import {
   LogOut,
   Menu,
   X,
+  Clock,
 } from "lucide-react";
 
 const NAV_ITEMS = [
   { name: "Tổng quan", href: "/admin/dashboard", icon: LayoutDashboard },
   { name: "Bài tập", href: "/admin/assignments", icon: GraduationCap },
   { name: "Lịch dạy", href: "/admin/schedule", icon: CalendarDays },
+  { name: "Đăng ký lịch dạy", href: "/admin/teaching-schedule", icon: Clock },
   { name: "Học sinh", href: "/admin/stats", icon: Users },
   { name: "Cài đặt", href: "/admin/settings", icon: Settings },
 ];
