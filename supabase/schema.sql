@@ -280,6 +280,9 @@ create policy "Public insert student sessions" on student_sessions
 create policy "Public update student sessions" on student_sessions
   for update using (auth.role() in ('anon','authenticated')) with check (true);
 
+create policy "Public read student sessions" on student_sessions
+  for select using (true);
+
 create policy "Service role manage student sessions" on student_sessions
   for all using (auth.role() = 'service_role') with check (true);
 
@@ -469,3 +472,9 @@ CREATE POLICY "Public read all schedule_registrations for availability" on sched
 -- Học sinh chỉ có thể thao tác với đăng ký của chính mình (nhưng chúng ta sẽ dùng service_role ở Backend API cho an toàn hơn)
 CREATE POLICY "Service role manage schedule_registrations" on schedule_registrations
   FOR ALL USING (auth.role() = 'service_role') WITH CHECK (true);
+
+-- ============================================
+-- 14. REALTIME CONFIGURATION
+-- ============================================
+ALTER PUBLICATION supabase_realtime ADD TABLE student_sessions;
+

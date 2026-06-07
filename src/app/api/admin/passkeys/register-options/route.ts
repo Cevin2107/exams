@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     const options = await generateRegistrationOptions({
       rpID,
       rpName,
-      userID: Buffer.from("admin"),
+      userID: new TextEncoder().encode("admin"),
       userName: "admin",
       timeout: 60000,
       attestationType: "none",

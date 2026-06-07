@@ -72,7 +72,25 @@ export default async function ResultPage({
 
   // Tính toán thống kê
   const actualQuestions = questions?.filter((q: any) => q.type !== 'section') || [];
+
+  const isQuestionUnanswered = (q: any) => {
+    const ans = answerMap.get(q.id);
+    if (!ans || !ans.answer) return true;
+    const trimmed = ans.answer.trim();
+    if (trimmed === "") return true;
+    if (q.type === "true_false") {
+      try {
+        const studentTf = JSON.parse(trimmed);
+        return Object.keys(studentTf).length === 0;
+      } catch {
+        return true;
+      }
+    }
+    return false;
+  };
+
   const correctCount = actualQuestions.filter((q: any) => {
+    if (isQuestionUnanswered(q)) return false;
     const answer = answerMap.get(q.id);
     let isCorrect = answer?.is_correct;
     if (isCorrect === null && q.type === "short_answer") {
@@ -82,6 +100,7 @@ export default async function ResultPage({
   }).length;
 
   const incorrectCount = actualQuestions.filter((q: any) => {
+    if (isQuestionUnanswered(q)) return false;
     const answer = answerMap.get(q.id);
     let isCorrect = answer?.is_correct;
     if (isCorrect === null && q.type === "short_answer") {
@@ -91,8 +110,7 @@ export default async function ResultPage({
   }).length;
 
   const unansweredCount = actualQuestions.filter((q: any) => {
-    const ans = answerMap.get(q.id);
-    return !ans || !ans.answer || ans.answer.trim() === "";
+    return isQuestionUnanswered(q);
   }).length;
 
   const percentage = totalPoints > 0 ? ((score / totalPoints) * 100).toFixed(1) : '0.0';

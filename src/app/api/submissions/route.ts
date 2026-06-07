@@ -176,6 +176,15 @@ export async function POST(req: Request) {
         isCorrect = correctCount === totalSubs && totalSubs > 0;
       }
 
+      const isSkipped = !studentAnswer || studentAnswer.trim() === "" || (q.type === "true_false" && (() => {
+        try {
+          const parsed = JSON.parse(studentAnswer);
+          return Object.keys(parsed).length === 0;
+        } catch {
+          return true;
+        }
+      })());
+
       totalScoreRaw += pointsAwarded;
 
       await supabase.from("answers").insert({
@@ -183,7 +192,7 @@ export async function POST(req: Request) {
         question_id: q.id,
         answer: studentAnswer || "",
         answer_image_url: (essayImages as Record<string, string> | undefined)?.[q.id] || null,
-        is_correct: (q.type === "mcq" || q.type === "short_answer" || q.type === "true_false") ? isCorrect : null,
+        is_correct: (q.type === "mcq" || q.type === "short_answer" || q.type === "true_false") ? (isSkipped ? null : isCorrect) : null,
         points_awarded: pointsAwarded,
       });
     }
