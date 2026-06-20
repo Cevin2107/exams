@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useAdminAssignments } from "@/features/admin/hooks/useAdminAssignments";
 import DatabaseSizeCard from "@/components/DatabaseSizeCard";
+import { MathText } from "@/components/MathText";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { Badge } from "@/components/ui/Badge";
@@ -141,7 +142,9 @@ export default function AdminDashboardPage() {
                   <div key={a.id} className="flex items-center justify-between px-4 sm:px-6 py-4 sm:py-5 transition hover:bg-slate-50/50 hover:backdrop-blur-sm">
                     <div className="min-w-0 flex-1 pr-4">
                       <div className="flex items-center gap-2 mb-1.5">
-                        <h3 className="text-[15px] font-semibold text-slate-900 truncate">{a.title}</h3>
+                        <h3 className="text-[15px] font-semibold text-slate-900 truncate">
+                          <MathText text={a.title} />
+                        </h3>
                         {a.is_hidden && (
                           <Badge variant="secondary" className="shrink-0 text-[10px] py-0 bg-slate-100/80 backdrop-blur-sm">Đang ẩn</Badge>
                         )}

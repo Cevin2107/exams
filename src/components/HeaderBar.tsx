@@ -38,7 +38,7 @@ export function HeaderBar({ studentName }: { studentName?: string }) {
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200/70 dark:border-slate-800 bg-white/95 dark:bg-[#0B1120]/80 shadow-sm backdrop-blur-md transition-colors duration-500">
       <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3" suppressHydrationWarning>
-        <div className="flex items-center gap-2.5" suppressHydrationWarning>
+        <Link href="/" className="flex items-center gap-2.5 hover:opacity-85 transition-opacity" suppressHydrationWarning>
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-600 dark:bg-indigo-500">
             <svg className="h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
@@ -52,18 +52,31 @@ export function HeaderBar({ studentName }: { studentName?: string }) {
               </p>
             )}
           </div>
-        </div>
+        </Link>
+
         <div className="flex items-center gap-2">
           {/* Hide theme toggle on admin pages */}
           {!isAdminPath && <ThemeToggle />}
           
-          <Link
-            href="/register-schedule"
-            className="flex items-center gap-1.5 rounded-xl border border-indigo-200 dark:border-indigo-700/50 bg-indigo-50 dark:bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-700 dark:text-indigo-400 transition hover:border-indigo-300 dark:hover:border-indigo-500/70 hover:bg-indigo-100 dark:hover:bg-indigo-500/20"
-          >
-            <CalendarPlus className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Đăng ký lịch học</span>
-          </Link>
+          {pathname === "/register-schedule" ? (
+            <Link
+              href="/"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300 transition hover:border-indigo-200 dark:hover:border-indigo-500/50 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 hover:text-indigo-700 dark:hover:text-indigo-400"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+              <span>Về trang chủ</span>
+            </Link>
+          ) : (
+            <Link
+              href="/register-schedule"
+              className="flex items-center gap-1.5 rounded-xl border border-indigo-200 dark:border-indigo-700/50 bg-indigo-50 dark:bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-700 dark:text-indigo-400 transition hover:border-indigo-300 dark:hover:border-indigo-500/70 hover:bg-indigo-100 dark:hover:bg-indigo-500/20"
+            >
+              <CalendarPlus className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Đăng ký lịch học</span>
+            </Link>
+          )}
 
           <Link
             href="/admin"

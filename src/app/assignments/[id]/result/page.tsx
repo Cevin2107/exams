@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import clsx from "clsx";
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { ResultQuestionsAccordion } from "@/features/assignments/components/ResultQuestionsAccordion";
+import { MathText } from "@/components/MathText";
 
 // Disable caching để luôn hiển thị dữ liệu mới nhất
 export const dynamic = 'force-dynamic';
@@ -205,7 +206,9 @@ export default async function ResultPage({
                       : "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 ring-1 ring-amber-200 dark:ring-amber-500/20"
                   }`}>{item.value}</span>
                 ) : (
-                  <p className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-slate-200 truncate">{item.value}</p>
+                  <p className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-slate-200 truncate">
+                    {item.label === "Bài tập" ? <MathText text={item.value || ""} /> : item.value}
+                  </p>
                 )}
               </div>
             ))}

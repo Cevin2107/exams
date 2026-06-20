@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import Link from "next/link";
 import { ArrowLeft, Settings, ListChecks, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MathText } from "@/components/MathText";
 
 interface AssignmentDetailTabsProps {
   assignmentId: string;
@@ -41,7 +42,9 @@ export function AssignmentDetailTabs({ assignmentId, initialAssignment, initialQ
                 <Settings className="h-5 w-5" />
              </div>
              <div>
-              <h1 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight line-clamp-2">{initialAssignment?.title || "Chi tiết bài tập"}</h1>
+              <h1 className="text-lg sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight line-clamp-2">
+                <MathText text={initialAssignment?.title || "Chi tiết bài tập"} />
+              </h1>
                 <p className="text-xs sm:text-sm font-medium text-slate-500 dark:text-slate-400 mt-0.5 hidden sm:block">Quản lý cấu hình, bộ câu hỏi và theo dõi quá trình làm bài.</p>
              </div>
           </div>

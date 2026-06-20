@@ -5,6 +5,7 @@ import { Assignment } from "@/lib/types";
 import { isBefore } from "date-fns";
 import clsx from "clsx";
 import Link from "next/link";
+import { MathText } from "@/components/MathText";
 
 interface AssignmentListProps {
   assignments: Assignment[];
@@ -265,7 +266,9 @@ export function AssignmentList({ assignments }: AssignmentListProps) {
                 <StatusBadge assignment={assignment} />
               </div>
 
-              <h2 className="text-base font-bold text-slate-900 dark:text-white leading-snug line-clamp-2 mb-4">{assignment.title}</h2>
+              <h2 className="text-base font-bold text-slate-900 dark:text-white leading-snug line-clamp-2 mb-4">
+                <MathText text={assignment.title} />
+              </h2>
 
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-slate-500 dark:text-slate-400 flex-1 mb-5" suppressHydrationWarning>
                 {dueDateTime && (
