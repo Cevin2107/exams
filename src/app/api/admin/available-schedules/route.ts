@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkAdminAuth } from "@/lib/adminAuth";
 import { createSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { deleteCalendarEvent } from "@/lib/googleCalendar";
 
 export async function GET(req: NextRequest) {
   const isAuth = await checkAdminAuth();
@@ -57,6 +58,24 @@ export async function POST(req: NextRequest) {
 
     // Perform deletions
     if (toDeleteIds.length > 0) {
+      // Find all schedule_registrations that will be cascade-deleted
+      const { data: regsToDelete, error: fetchErr } = await supabaseAdmin
+        .from("schedule_registrations")
+        .select("id, google_calendar_event_id")
+        .in("available_schedule_id", toDeleteIds);
+
+      if (!fetchErr && regsToDelete && regsToDelete.length > 0) {
+        for (const reg of regsToDelete as any[]) {
+          if (reg.google_calendar_event_id) {
+            try {
+              await deleteCalendarEvent(reg.google_calendar_event_id);
+            } catch (calErr) {
+              console.error(`Failed to delete calendar event for registration ${reg.id} on available schedule delete:`, calErr);
+            }
+          }
+        }
+      }
+
       const { error: delErr } = await supabaseAdmin
         .from("available_schedules")
         .delete()
